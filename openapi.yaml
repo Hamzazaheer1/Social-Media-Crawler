@@ -1,0 +1,182 @@
+openapi: 3.0.3
+info:
+  title: Social Media Crawler API
+  version: 1.0.0
+servers:
+  - url: http://localhost:3000
+tags:
+  - name: Crawl
+  - name: Results
+
+paths:
+  /crawl:
+    post:
+      tags: [Crawl]
+      summary: Start crawl job (X/Instagram/TikTok/YouTube)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CrawlRequest"
+      responses:
+        "201":
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobCreated"
+
+  /crawl/{jobId}:
+    get:
+      tags: [Crawl]
+      summary: Get job status
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobStatus"
+
+  /results/{jobId}:
+    get:
+      tags: [Results]
+      summary: Get crawl results (when done)
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Result payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CrawlResult"
+
+components:
+  schemas:
+    CrawlRequest:
+      type: object
+      required: [platform, target]
+      properties:
+        platform:
+          type: string
+          enum: [x, instagram, tiktok, youtube]
+        target:
+          description: Handle or URL
+          type: string
+          example: "@someuser"
+        options:
+          type: object
+          properties:
+            includePinned: { type: boolean, default: true }
+            includeRecent: { type: boolean, default: true }
+            recentLimit: { type: integer, default: 10 }
+            proofKeywords:
+              type: array
+              items: { type: string }
+              example: ["founder", "ceo", "flexlab.dev"]
+
+    JobCreated:
+      type: object
+      properties:
+        jobId: { type: string }
+        status: { type: string, enum: [queued] }
+
+    JobStatus:
+      type: object
+      properties:
+        jobId: { type: string }
+        status: { type: string, enum: [queued, running, done, failed] }
+        error: { type: string, nullable: true }
+
+    CrawlResult:
+      type: object
+      properties:
+        jobId: { type: string }
+        platform: { type: string }
+        target: { type: string }
+        profile:
+          $ref: "#/components/schemas/Profile"
+        pinned:
+          nullable: true
+          $ref: "#/components/schemas/Post"
+        recent:
+          type: array
+          items:
+            $ref: "#/components/schemas/Post"
+        proofs:
+          $ref: "#/components/schemas/Proofs"
+        meta:
+          type: object
+          properties:
+            fetchedAt: { type: string, format: date-time }
+
+    Profile:
+      type: object
+      properties:
+        handle: { type: string }
+        displayName: { type: string, nullable: true }
+        bio: { type: string, nullable: true }
+        about: { type: string, nullable: true }
+        links:
+          type: array
+          items: { type: string }
+        isPrivate: { type: boolean, default: false }
+
+    Post:
+      type: object
+      properties:
+        id: { type: string }
+        url: { type: string, nullable: true }
+        text: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time, nullable: true }
+
+    Proofs:
+      type: object
+      properties:
+        bioMatch:
+          type: object
+          properties:
+            matched: { type: boolean }
+            score: { type: number }
+            evidence:
+              type: array
+              items: { type: string }
+        aboutMatch:
+          type: object
+          properties:
+            matched: { type: boolean }
+            score: { type: number }
+            evidence:
+              type: array
+              items: { type: string }
+        pinnedMatch:
+          type: object
+          properties:
+            matched: { type: boolean }
+            score: { type: number }
+            evidence:
+              type: array
+              items: { type: string }
+        recentMatch:
+          type: object
+          properties:
+            matched: { type: boolean }
+            score: { type: number }
+            evidence:
+              type: array
+              items: { type: string }
+        final:
+          type: object
+          properties:
+            matched: { type: boolean }
+            confidence: { type: number }
