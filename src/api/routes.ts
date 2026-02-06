@@ -1,18 +1,28 @@
 import { Router } from "express";
 import { z } from "zod";
 import { startCrawl } from "../pipelines/crawl.js";
-import { getJob } from "../store/db.js";
+import { getJob, getProgress } from "../store/db.js";
 
 const router = Router();
 
 const CrawlSchema = z.object({
-  platform: z.enum(["x", "instagram", "tiktok", "youtube"]),
+  platform: z.enum(["x", "instagram", "tiktok", "youtube", "website"]),
   target: z.string().min(2),
   options: z.object({
     includePinned: z.boolean().optional(),
     includeRecent: z.boolean().optional(),
     recentLimit: z.number().int().min(0).max(10_000_000).optional(),
     proofKeywords: z.array(z.string()).optional(),
+    // Website-specific options
+    contentSelector: z.string().optional(),
+    titleSelector: z.string().optional(),
+    textSelector: z.string().optional(),
+    linkSelector: z.string().optional(),
+    dateSelector: z.string().optional(),
+    filterKeywords: z.array(z.string()).optional(),
+    waitForSelector: z.string().optional(),
+    scrollToLoad: z.boolean().optional(),
+    maxScrolls: z.number().int().min(0).max(100).optional(),
   }).optional()
 });
 
@@ -29,6 +39,7 @@ router.post("/crawl", (req, res) => {
   return res.status(201).json({ jobId, status: "queued" });
 });
 
+// Keep /crawl for all platforms (non-website)
 router.get("/crawl/:jobId", (req, res) => {
   const job = getJob(req.params.jobId);
   if (!job) return res.status(404).json({ error: "Not found" });
@@ -60,4 +71,107 @@ return res.json({
   return res.status(500).json({ error: "Internal server error" });
 }
 });
+
+// POST /api/search/website - Keyword search on website
+// Provide website homepage URL - system will automatically detect and search in all blogs
+router.post("/api/search/website", async (req, res) => {
+  try {
+    const { url, keywords } = req.body;
+    if (!url || typeof url !== "string") {
+      return res.status(400).json({ error: "URL is required" });
+    }
+    if (!keywords || !Array.isArray(keywords) || keywords.length === 0) {
+      return res.status(400).json({ error: "Keywords array is required" });
+    }
+
+    // Validate URL format
+    try {
+      new URL(url);
+    } catch {
+      return res.status(400).json({ error: "Invalid URL format" });
+    }
+
+    const { fetchWebsiteContent } = await import("../platforms/website/adapters.js");
+    
+    // Auto-detect blogs from website homepage and search in all content
+    const result = await fetchWebsiteContent(url, {
+      filterKeywords: keywords,
+      scrollToLoad: true,
+      maxScrolls: 15,
+      limit: 500,
+      maxPages: 10, // Auto-detect and crawl up to 10 blog pages
+    });
+
+    return res.json({
+      url,
+      keywords,
+      matchesFound: result.meta.searchResults?.length || 0,
+      searchResults: result.meta.searchResults || [],
+      matchingPosts: result.posts,
+      totalItems: result.posts.length,
+      pagesCrawled: result.meta.pagesCrawled,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: error.message || "Internal server error" });
+  }
+});
+
+// POST /api/website/fetch - Fetch all blogs via listing flow
+// Flow: Website URL → Blog listing page → Extract article URLs → For each article: fetch full content (date, author, headings)
+router.post("/api/website/fetch", async (req, res) => {
+  try {
+    const { url } = req.body;
+    
+    // Validate URL
+    if (!url || typeof url !== "string") {
+      return res.status(400).json({ error: "URL is required" });
+    }
+    
+    // Validate URL format
+    try {
+      new URL(url);
+    } catch {
+      return res.status(400).json({ error: "Invalid URL format" });
+    }
+
+    const { fetchWebsiteContentViaListing } = await import("../platforms/website/adapters.js");
+    
+    const result = await fetchWebsiteContentViaListing(url, {
+      maxArticles: 50,
+      scrollToLoad: true,
+      maxScrolls: 15,
+      respectRobotsTxt: true,
+    });
+
+    return res.json({
+      url,
+      profile: result.profile,
+      content: result.posts,
+      totalItems: result.posts.length,
+      listingUrl: result.meta.listingUrl,
+      articleUrlsFound: result.meta.articleUrlsFound,
+      articlesFetched: result.meta.articlesFetched,
+      errors: result.meta.errors,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ 
+      error: error.message || "Internal server error",
+      details: process.env.NODE_ENV === "development" ? error.stack : undefined
+    });
+  }
+});
+
+// GET /api/health - Health check
+router.get("/api/health", (req, res) => {
+  // Get queue size (number of running/queued jobs)
+  const { getJob } = require("../store/db.js");
+  // Simple health check - can be enhanced
+  return res.json({
+    status: "ok",
+    service: "web-scraper-api",
+    timestamp: new Date().toISOString(),
+    message: "Service is running",
+  });
+});
+
 export default router;

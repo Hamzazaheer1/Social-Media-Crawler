@@ -1,12 +1,20 @@
 openapi: 3.0.3
 info:
-  title: Social Media Crawler API
+  title: Social Media & Website Crawler API
   version: 1.0.0
 servers:
   - url: http://localhost:3000
 tags:
   - name: Crawl
+    description: Social Media crawling (X/Instagram/TikTok/YouTube)
+  - name: Website Crawl
+    description: Website crawling with CSS selectors
+  - name: Website Results
+    description: Website crawl results and exports
   - name: Results
+    description: General crawl results
+  - name: System
+    description: System health and status
 
 paths:
   /crawl:
@@ -99,6 +107,180 @@ paths:
               schema:
                 $ref: "#/components/schemas/CrawlResult"
 
+  /api/search/website:
+    post:
+      tags: [Website Crawl]
+      summary: Keyword Search on Website
+      description: "Search for keywords on a website. Provide website homepage URL (not blog URL) - the system will automatically detect all blogs from the website and search for keywords in all content. Only content matching the keywords will be returned."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, keywords]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: "Website homepage URL (e.g., https://example.com). The system will automatically detect and search in all blogs."
+                  example: "https://example.com"
+                keywords:
+                  type: array
+                  items:
+                    type: string
+                  description: "Keywords to search for. Only content matching at least one keyword will be returned."
+                  example: ["javascript", "react"]
+            examples:
+              search_with_keywords:
+                summary: "Search Keywords on Website"
+                description: "Provide website homepage URL and keywords. System will automatically detect all blogs and search for keywords."
+                value:
+                  url: "https://example.com"
+                  keywords: ["javascript", "react"]
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  keywords:
+                    type: array
+                    items:
+                      type: string
+                  matchesFound:
+                    type: integer
+                  searchResults:
+                    type: array
+                    items:
+                      type: object
+                  matchingPosts:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Post"
+                  totalItems:
+                    type: integer
+                  pagesCrawled:
+                    type: integer
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+  /api/website/fetch:
+    post:
+      tags: [Website Crawl]
+      summary: Fetch All Blogs Content from Website
+      description: "Fetch all blogs and their content from a website. Provide website homepage URL (not blog URL) - the system will automatically detect all blogs from the website and fetch all content without any filtering."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: "Website homepage URL (e.g., https://example.com). The system will automatically detect and fetch all blogs with their content."
+                  example: "https://example.com"
+            examples:
+              fetch_all_blogs:
+                summary: "Fetch All Blogs Content"
+                description: "Provide website homepage URL. System will automatically detect all blogs and fetch all content."
+                value:
+                  url: "https://example.com"
+      responses:
+        "200":
+          description: All blogs content fetched successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  profile:
+                    $ref: "#/components/schemas/Profile"
+                  content:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Post"
+                    description: "All blog posts/content fetched from the website"
+                  totalItems:
+                    type: integer
+                    description: "Total number of blog posts/content items fetched"
+                  pagesCrawled:
+                    type: integer
+                    description: "Number of blog pages crawled"
+                  duplicatesRemoved:
+                    type: integer
+                    description: "Number of duplicate items removed"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+
+  /api/health:
+    get:
+      tags: [System]
+      summary: Health Check
+      description: "Check if the service is running"
+      responses:
+        "200":
+          description: Service status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  service:
+                    type: string
+                    example: "web-scraper-api"
+                  timestamp:
+                    type: string
+                    format: date-time
+                  message:
+                    type: string
+                    example: "Service is running"
+
+
 components:
   schemas:
     CrawlRequest:
@@ -163,6 +345,107 @@ components:
           type: object
           properties:
             fetchedAt: { type: string, format: date-time }
+            pagesCrawled:
+              type: integer
+              description: Number of pages crawled (website only)
+            duplicatesRemoved:
+              type: integer
+              description: Number of duplicate items removed (website only)
+            totalPosts:
+              type: integer
+              description: Total number of items found
+
+    WebsiteCrawlResult:
+      type: object
+      properties:
+        jobId: { type: string }
+        platform: { type: string, enum: [website] }
+        target: { type: string }
+        profile:
+          $ref: "#/components/schemas/Profile"
+        meta:
+          type: object
+          properties:
+            fetchedAt: { type: string, format: date-time }
+            pagesCrawled: { type: integer }
+            duplicatesRemoved: { type: integer }
+            totalItems:
+              type: integer
+              description: Total number of content items found
+            posts:
+              type: array
+              description: Extracted content items/posts (only for website platform)
+              items:
+                $ref: "#/components/schemas/Post"
+            searchResults:
+              type: array
+              description: Search results for keywords/identifiers (if filterKeywords provided). Searches in page content, titles, URLs, and metadata.
+              items:
+                type: object
+                properties:
+                  keyword:
+                    type: string
+                    description: The keyword/identifier that was searched
+                  found:
+                    type: boolean
+                    description: Whether the keyword was found anywhere on the website
+                  totalMatches:
+                    type: integer
+                    description: Total number of matches found for this keyword
+                  locations:
+                    type: array
+                    description: Detailed locations where the keyword was found
+                    items:
+                      type: object
+                      properties:
+                        url:
+                          type: string
+                          description: URL of the page where keyword was found
+                        context:
+                          type: string
+                          description: Full context text around the match
+                        position:
+                          type: string
+                          enum: [title, content, url, author, meta]
+                          description: Where keyword was found (title, content, url, author, or meta tags)
+                        matchType:
+                          type: string
+                          enum: [title, content, url, meta, html]
+                          description: Type of match (title, content, url, meta tags, or raw HTML)
+                        snippet:
+                          type: string
+                          description: Highlighted snippet showing the keyword match with context
+
+    CrawlProgress:
+      type: object
+      properties:
+        jobId: { type: string }
+        status:
+          type: string
+          enum: [queued, running, done, failed]
+        progress:
+          type: object
+          properties:
+            currentPage:
+              type: integer
+              description: Current page being crawled
+            totalPages:
+              type: integer
+              nullable: true
+              description: Total pages to crawl (if known)
+            itemsFound:
+              type: integer
+              description: Total items found so far
+            pagesCrawled:
+              type: integer
+              description: Number of pages completed
+            errors:
+              type: integer
+              description: Number of errors encountered
+        estimatedTimeRemaining:
+          type: integer
+          nullable: true
+          description: Estimated seconds remaining
 
     Profile:
       type: object
@@ -183,6 +466,21 @@ components:
         url: { type: string, nullable: true }
         text: { type: string, nullable: true }
         createdAt: { type: string, format: date-time, nullable: true }
+        author:
+          type: string
+          nullable: true
+          description: Author name (if extracted)
+        images:
+          type: array
+          items:
+            type: string
+          nullable: true
+          description: Array of image URLs (if extracted)
+        metadata:
+          type: object
+          nullable: true
+          description: Open Graph, Twitter Cards, Schema.org metadata
+          additionalProperties: true
 
     Proofs:
       type: object
@@ -224,3 +522,128 @@ components:
           properties:
             matched: { type: boolean }
             confidence: { type: number }
+
+    WebsiteCrawlRequest:
+      type: object
+      required: [platform, target]
+      properties:
+        platform:
+          type: string
+          enum: [website]
+          description: Platform must be "website" for website crawling
+        target:
+          type: string
+          format: uri
+          description: "Provide any webpage URL. If filterKeywords are specified, ONLY content matching at least one keyword will be fetched. Search results will show where keywords are found."
+          example: "https://blog.example.com"
+        options:
+          type: object
+          description: Website crawling options
+          properties:
+            includePinned:
+              type: boolean
+              default: true
+              description: Whether to include pinned/featured content
+            includeRecent:
+              type: boolean
+              default: true
+              description: Whether to fetch recent content
+            recentLimit:
+              type: integer
+              minimum: 0
+              maximum: 10000000
+              default: 0
+              description: "Maximum number of content items to fetch. 0 = fetch all (no limit)"
+            proofKeywords:
+              type: array
+              items:
+                type: string
+              description: Keywords for proof matching
+              example: ["founder", "ceo", "company"]
+            contentSelector:
+              type: string
+              description: "CSS selector to identify content blocks (articles, blog posts, etc.). Default: 'article, .post, .blog-post, .entry, [role=\"article\"]'"
+              example: "article"
+            titleSelector:
+              type: string
+              description: "CSS selector for title within each content block. Default: 'h1, h2, .title, .post-title, .entry-title'"
+              example: "h2.title"
+            textSelector:
+              type: string
+              description: "CSS selector for text content within each content block. Default: 'p, .content, .excerpt, .summary, .post-content'"
+              example: ".content p"
+            linkSelector:
+              type: string
+              description: "CSS selector for link to full content. Default: 'a' (first link found)"
+              example: "a.read-more"
+            dateSelector:
+              type: string
+              description: "CSS selector for publication date. Default: '.date, .published, time, .post-date, .entry-date'"
+              example: "time.published"
+            filterKeywords:
+              type: array
+              items:
+                type: string
+              description: "Keywords/identifiers to search on the webpage. ALL blogs/content will be fetched regardless of keywords. If keywords are specified, search will be performed and results will show where these keywords are found (in title, content, URL, meta tags). Keywords do NOT filter content - they only provide search results."
+              example: ["javascript", "react", "tutorial"]
+            waitForSelector:
+              type: string
+              description: "CSS selector to wait for before scraping (for dynamic/JavaScript-rendered content)"
+              example: ".blog-list"
+            scrollToLoad:
+              type: boolean
+              default: false
+              description: "Whether to scroll page to load lazy-loaded content (for infinite scroll pages)"
+            maxScrolls:
+              type: integer
+              minimum: 0
+              maximum: 100
+              default: 10
+              description: "Maximum number of scrolls when scrollToLoad is true"
+            # Advanced options
+            authorSelector:
+              type: string
+              description: "CSS selector for author name. Default: auto-detect from common patterns"
+              example: ".author, [rel='author']"
+            imageSelector:
+              type: string
+              description: "CSS selector for images. Default: 'img'"
+              example: "img, .post-image"
+            followPagination:
+              type: boolean
+              default: false
+              description: "Whether to follow pagination links and crawl multiple pages"
+            paginationSelector:
+              type: string
+              description: "CSS selector for next page link. Default: auto-detect from common patterns"
+              example: ".next, a[rel='next']"
+            maxPages:
+              type: integer
+              minimum: 1
+              maximum: 100
+              default: 10
+              description: "Maximum number of pages to crawl when followPagination is true"
+            respectRobotsTxt:
+              type: boolean
+              default: true
+              description: "Whether to respect robots.txt rules (recommended: true)"
+            extractImages:
+              type: boolean
+              default: true
+              description: "Whether to extract image URLs from content"
+            extractAuthor:
+              type: boolean
+              default: true
+              description: "Whether to extract author information"
+            extractMetadata:
+              type: boolean
+              default: true
+              description: "Whether to extract Open Graph, Twitter Cards, and Schema.org metadata"
+            enableCaching:
+              type: boolean
+              default: false
+              description: "Whether to cache page responses (improves performance for repeated crawls)"
+            deduplicateContent:
+              type: boolean
+              default: true
+              description: "Whether to remove duplicate content based on URL"

@@ -342,72 +342,144 @@ export async function fetchInstagramAllPosts(target: string): Promise<Post[]> {
     
     try {
       await page.waitForSelector('a[href*="/p/"], article, main', { timeout: 10000 });
-      await delay(2000);
     } catch (_) {
-      logger.warn({ username }, "No posts found on profile page - might be login wall or private account");
+      logger.warn({ username }, "No posts found on profile page");
     }
-    
-    await delay(2000);
-    
-    const html = await page.content();
 
-    let bioFromBrowser: string | null = null;
-    try {
-      bioFromBrowser = await page.evaluate(() => {
-        const selectors = [
-          'header section h1 + div span',
-          'header section div[dir="auto"] span',
-          'header section span[dir="auto"]',
-          '[data-testid="user-bio"]',
-          'h1 + div span',
-        ];
-        
-        for (const selector of selectors) {
-          const elements = document.querySelectorAll(selector);
-          for (const el of Array.from(elements)) {
-            const text = (el.textContent || '').trim();
-            if (text && !/\d+[\s,.]*\d*\s*(followers?|following|posts?)/i.test(text) &&
-                !text.toLowerCase().includes('see instagram') &&
-                text.length > 5 && text.length < 500) {
-              return text;
-            }
-          }
+    const seenPostIds = new Set<string>();
+    let lastPostCount = 0;
+    let noNewPostsCount = 0;
+    const MAX_NO_NEW_POSTS = 5; // Stop after 5 consecutive scrolls with no new posts (increased)
+    let scrollAttempts = 0;
+    const MAX_SCROLL_ATTEMPTS = 500; // Safety limit (increased)
+
+    logger.info({ username }, "[Instagram] Starting continuous scroll to load all posts");
+
+    // Continuously scroll and collect post IDs
+    while (scrollAttempts < MAX_SCROLL_ATTEMPTS && noNewPostsCount < MAX_NO_NEW_POSTS) {
+      scrollAttempts++;
+      
+      // Scroll down multiple times to trigger lazy loading
+      for (let scrollStep = 0; scrollStep < 3; scrollStep++) {
+        await page.evaluate(() => {
+          window.scrollTo(0, document.body.scrollHeight);
+        });
+        await delay(1000); // Wait between scrolls
+      }
+      
+      // Wait for content to load
+      await delay(3000); // Increased wait time
+      
+      // Get current post IDs from page
+      const currentPostIds = await page.evaluate(() => {
+        const ids = new Set<string>();
+        // Extract from links
+        document.querySelectorAll('a[href*="/p/"]').forEach((el) => {
+          const href = el.getAttribute("href");
+          const match = href?.match(/\/p\/([a-zA-Z0-9_-]+)/);
+          if (match && match[1]) ids.add(match[1]);
+        });
+        // Extract from HTML content
+        const html = document.documentElement.innerHTML;
+        const regex = /\/p\/([a-zA-Z0-9_-]{8,})/g;
+        let m;
+        while ((m = regex.exec(html)) !== null) {
+          if (m[1]) ids.add(m[1]);
         }
-        return null;
+        return Array.from(ids);
       });
-    } catch (_) {
+
+      // Add new post IDs
+      let newPostsFound = 0;
+      for (const id of currentPostIds) {
+        if (!seenPostIds.has(id)) {
+          seenPostIds.add(id);
+          newPostsFound++;
+        }
+      }
+
+      if (newPostsFound > 0) {
+        noNewPostsCount = 0;
+        logger.info({ username, newPosts: newPostsFound, totalPosts: seenPostIds.size, scrollAttempts }, "[Instagram] Found new posts");
+      } else {
+        noNewPostsCount++;
+        logger.debug({ username, scrollAttempts, noNewPostsCount, totalPosts: seenPostIds.size, currentPostCount: currentPostIds.length }, "[Instagram] No new posts found");
+      }
+
+      // Check if we've reached the end (no new posts for a while)
+      if (seenPostIds.size === lastPostCount) {
+        noNewPostsCount++;
+        logger.debug({ username, scrollAttempts, noNewPostsCount, totalPosts: seenPostIds.size }, "[Instagram] Post count unchanged");
+      } else {
+        lastPostCount = seenPostIds.size;
+        noNewPostsCount = 0;
+      }
+
+      // Log progress every scroll for debugging
+      logger.debug({ username, scrollAttempts, totalPosts: seenPostIds.size, noNewPostsCount, newPostsFound }, "[Instagram] Scroll attempt");
+      
+      // Log progress every 10 scrolls
+      if (scrollAttempts % 10 === 0) {
+        logger.info({ username, totalPosts: seenPostIds.size, scrollAttempts, noNewPostsCount }, "[Instagram] Scrolling progress");
+      }
     }
+
+    logger.info({ username, totalPosts: seenPostIds.size }, "[Instagram] Finished scrolling, extracting post details from page");
+
+    // Get final HTML with all loaded posts - try multiple times to get all hydration data
+    await delay(3000);
+    let html = await page.content();
     
-    const allPosts = parsePostsFromHtml(html, username);
+    // Try scrolling one more time and getting HTML again to ensure we have latest hydration
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await delay(2000);
+    html = await page.content();
+
+    // Parse all posts from HTML
+    const posts = parsePostsFromHtml(html, username);
+    const allPostsMap = new Map<string, Post>();
+    
+    // Add posts from parsing (these should have captions from hydration)
+    for (const post of posts) {
+      if (seenPostIds.has(post.id)) {
+        allPostsMap.set(post.id, post);
+      }
+    }
+
+    // Ensure all seen post IDs are in the result
+    for (const postId of seenPostIds) {
+      if (!allPostsMap.has(postId)) {
+        allPostsMap.set(postId, {
+          id: postId,
+          url: `https://www.instagram.com/p/${postId}/`,
+          text: null,
+          createdAt: null,
+        });
+      }
+    }
+
+    const allPosts = Array.from(allPostsMap.values());
     
     await browser.close();
 
-    const postsWithDates = allPosts.filter(p => p.createdAt);
-    
-    let finalSortedPosts: Post[];
-    if (postsWithDates.length > 0) {
-      finalSortedPosts = allPosts.sort((a, b) => {
-        if (!a.createdAt && !b.createdAt) return 0;
-        if (!a.createdAt) return 1;
-        if (!b.createdAt) return -1;
-        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-      });
-    } else {
-      finalSortedPosts = allPosts.reverse();
-    }
+    allPosts.sort((a, b) => {
+      if (!a.createdAt && !b.createdAt) return 0;
+      if (!a.createdAt) return 1;
+      if (!b.createdAt) return -1;
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    });
 
     logger.info(
       {
         username,
-        totalPosts: finalSortedPosts.length,
-        withCaptions: finalSortedPosts.filter((p) => p.text && String(p.text).trim()).length,
-        withDates: postsWithDates.length,
+        totalPosts: allPosts.length,
+        withCaptions: allPosts.filter((p) => p.text && String(p.text).trim()).length,
         order: "first → last",
       },
-      "[Instagram] Posts fetch completed"
+      "[Instagram] All posts fetch completed"
     );
 
-    return finalSortedPosts;
+    return allPosts;
   } catch (error: unknown) {
     try {
       await browser?.close();

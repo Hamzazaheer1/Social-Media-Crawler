@@ -22,11 +22,18 @@ app.use((err: unknown, _req: express.Request, res: express.Response, next: expre
   next(err);
 });
 
-// Swagger
+// Swagger (single file with both social media and website endpoints)
 const spec = loadOpenApiSpec();
-app.use("/docs", swaggerUi.serve, swaggerUi.setup(spec));
+app.use("/docs", swaggerUi.serve, swaggerUi.setup(spec, {
+  customCss: ".swagger-ui .topbar { display: none }",
+  customSiteTitle: "Social Media & Website Crawler API"
+}));
 
+// Routes
 app.use("/", routes);
 
 const port = Number(process.env.PORT || 3000);
-app.listen(port, () => logger.info(`Server running on http://localhost:${port} | Swagger: /docs`));
+app.listen(port, () => {
+  logger.info(`Server running on http://localhost:${port}`);
+  logger.info(`Swagger Docs: http://localhost:${port}/docs`);
+});

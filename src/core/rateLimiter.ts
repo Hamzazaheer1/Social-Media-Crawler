@@ -8,6 +8,7 @@ export const limiters = {
     minTime: 120,
   }),
   youtube: new Bottleneck({ maxConcurrent: 6, minTime: 80 }),
+  website: new Bottleneck({ maxConcurrent: 2, minTime: 1000 }), // Conservative rate limit for websites
 };
 
 export async function runLimited<T>(platform: keyof typeof limiters, fn: () => Promise<T>) {

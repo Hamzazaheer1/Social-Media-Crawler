@@ -22,6 +22,12 @@ import {
   fetchInstagramProfile,
 } from "../platforms/instagram/adapters.js";
 
+import {
+  fetchWebsiteProfileAndRecent,
+  fetchWebsiteContent,
+} from "../platforms/website/adapters.js";
+import { updateProgress } from "../store/db.js";
+
 import { logger } from "../core/logger.js";
 
 export const FETCH_ALL_LIMIT = 100_000;
@@ -57,6 +63,23 @@ async function runJob(jobId: string) {
     let pinned: Post | null = null;
     let pinnedPosts: Post[] | undefined;
     let recent: Post[] = [];
+    let crawlMeta: { 
+      pagesCrawled?: number; 
+      duplicatesRemoved?: number;
+      posts?: Post[];
+      searchResults?: Array<{
+        keyword: string;
+        found: boolean;
+        totalMatches: number;
+        locations: Array<{
+          url: string;
+          context: string;
+          position: string;
+          matchType: string;
+          snippet?: string;
+        }>;
+      }>;
+    } = {};
 
     /* ======================= X ======================= */
     if (platform === "x") {
@@ -148,6 +171,91 @@ async function runJob(jobId: string) {
         pinned = null;
       }
     }
+
+    /* ======================= WEBSITE ======================= */
+    else if (platform === "website") {
+      logger.info({ target }, "[Website] crawl started");
+
+      // Build website options, filtering out undefined values
+      const websiteOptions: {
+        contentSelector?: string;
+        titleSelector?: string;
+        textSelector?: string;
+        linkSelector?: string;
+        dateSelector?: string;
+        authorSelector?: string;
+        imageSelector?: string;
+        filterKeywords?: string[];
+        waitForSelector?: string;
+        scrollToLoad?: boolean;
+        maxScrolls?: number;
+        followPagination?: boolean;
+        paginationSelector?: string;
+        maxPages?: number;
+        respectRobotsTxt?: boolean;
+        extractImages?: boolean;
+        extractAuthor?: boolean;
+        extractMetadata?: boolean;
+        enableCaching?: boolean;
+        deduplicateContent?: boolean;
+        onProgress?: (progress: { currentPage: number; totalPages?: number; itemsFound: number }) => void;
+      } = {};
+      
+      if (options?.contentSelector !== undefined) websiteOptions.contentSelector = options.contentSelector;
+      if (options?.titleSelector !== undefined) websiteOptions.titleSelector = options.titleSelector;
+      if (options?.textSelector !== undefined) websiteOptions.textSelector = options.textSelector;
+      if (options?.linkSelector !== undefined) websiteOptions.linkSelector = options.linkSelector;
+      if (options?.dateSelector !== undefined) websiteOptions.dateSelector = options.dateSelector;
+      if (options?.authorSelector !== undefined) websiteOptions.authorSelector = options.authorSelector;
+      if (options?.imageSelector !== undefined) websiteOptions.imageSelector = options.imageSelector;
+      if (options?.filterKeywords !== undefined) websiteOptions.filterKeywords = options.filterKeywords;
+      if (options?.waitForSelector !== undefined) websiteOptions.waitForSelector = options.waitForSelector;
+      if (options?.scrollToLoad !== undefined) websiteOptions.scrollToLoad = options.scrollToLoad;
+      if (options?.maxScrolls !== undefined) websiteOptions.maxScrolls = options.maxScrolls;
+      if (options?.followPagination !== undefined) websiteOptions.followPagination = options.followPagination;
+      if (options?.paginationSelector !== undefined) websiteOptions.paginationSelector = options.paginationSelector;
+      if (options?.maxPages !== undefined) websiteOptions.maxPages = options.maxPages;
+      if (options?.respectRobotsTxt !== undefined) websiteOptions.respectRobotsTxt = options.respectRobotsTxt;
+      if (options?.extractImages !== undefined) websiteOptions.extractImages = options.extractImages;
+      if (options?.extractAuthor !== undefined) websiteOptions.extractAuthor = options.extractAuthor;
+      if (options?.extractMetadata !== undefined) websiteOptions.extractMetadata = options.extractMetadata;
+      if (options?.enableCaching !== undefined) websiteOptions.enableCaching = options.enableCaching;
+      if (options?.deduplicateContent !== undefined) websiteOptions.deduplicateContent = options.deduplicateContent;
+
+      // Add progress tracking
+      websiteOptions.onProgress = (progress) => {
+        updateProgress(jobId, progress);
+      };
+
+      if (includeRecent && recentLimit >= FETCH_ALL_LIMIT) {
+        logger.info("[Website] fetching ALL content");
+        const result = await runLimited("website", () =>
+          fetchWebsiteContent(target, { ...websiteOptions, limit: FETCH_ALL_LIMIT })
+        );
+        profile = result.profile;
+        recent = []; // Website doesn't use recent field
+        crawlMeta.pagesCrawled = result.meta.pagesCrawled;
+        crawlMeta.duplicatesRemoved = result.meta.duplicatesRemoved;
+        crawlMeta.posts = result.posts;
+        if (result.meta.searchResults && result.meta.searchResults.length > 0) {
+          crawlMeta.searchResults = result.meta.searchResults;
+        }
+      } else {
+        const profileAndRecent = await runLimited("website", () =>
+          fetchWebsiteProfileAndRecent(target, recentLimit, websiteOptions)
+        );
+        profile = profileAndRecent.profile;
+        recent = []; // Website doesn't use recent field
+        crawlMeta.pagesCrawled = profileAndRecent.meta.pagesCrawled;
+        crawlMeta.duplicatesRemoved = profileAndRecent.meta.duplicatesRemoved;
+        crawlMeta.posts = profileAndRecent.recent;
+        if (profileAndRecent.meta.searchResults && profileAndRecent.meta.searchResults.length > 0) {
+          crawlMeta.searchResults = profileAndRecent.meta.searchResults;
+        }
+      }
+
+      pinned = null; // Website doesn't use pinned field
+    }
     
     else {
       profile = {
@@ -162,27 +270,57 @@ async function runJob(jobId: string) {
 
     const meta: CrawlResult["meta"] = {
       fetchedAt: new Date().toISOString(),
+      ...(platform === "website" && crawlMeta ? {
+        pagesCrawled: crawlMeta.pagesCrawled,
+        duplicatesRemoved: crawlMeta.duplicatesRemoved,
+        posts: crawlMeta.posts,
+        searchResults: crawlMeta.searchResults,
+      } : {}),
     };
 
-    let result: CrawlResult = {
-      jobId,
-      platform,
-      target,
-      profile,
-      pinned,
-      ...(pinnedPosts ? { pinnedPosts } : {}),
-      recent,
-      proofs: {
-        bioMatch: { matched: false, score: 0, evidence: [] },
-        aboutMatch: { matched: false, score: 0, evidence: [] },
-        pinnedMatch: { matched: false, score: 0, evidence: [] },
-        recentMatch: { matched: false, score: 0, evidence: [] },
-        final: { matched: false, confidence: 0 },
-      },
-      meta,
-    };
+    // Build result - exclude recent/pinned/proofs for website platform
+    let result: CrawlResult;
+    if (platform === "website") {
+      result = {
+        jobId,
+        platform,
+        target,
+        profile,
+        pinned: null, // Required by type but not used for website
+        recent: [], // Required by type but not used for website
+        proofs: {
+          bioMatch: { matched: false, score: 0, evidence: [] },
+          aboutMatch: { matched: false, score: 0, evidence: [] },
+          pinnedMatch: { matched: false, score: 0, evidence: [] },
+          recentMatch: { matched: false, score: 0, evidence: [] },
+          final: { matched: false, confidence: 0 },
+        }, // Required by type but not returned in API response
+        meta,
+      };
+    } else {
+      result = {
+        jobId,
+        platform,
+        target,
+        profile,
+        pinned,
+        ...(pinnedPosts ? { pinnedPosts } : {}),
+        recent,
+        proofs: {
+          bioMatch: { matched: false, score: 0, evidence: [] },
+          aboutMatch: { matched: false, score: 0, evidence: [] },
+          pinnedMatch: { matched: false, score: 0, evidence: [] },
+          recentMatch: { matched: false, score: 0, evidence: [] },
+          final: { matched: false, confidence: 0 },
+        },
+        meta,
+      };
+    }
 
-    result = attachProofs(result, keywords);
+    // Only attach proofs for non-website platforms
+    if (platform !== "website") {
+      result = attachProofs(result, keywords);
+    }
 
     updateJob(jobId, { status: "done", result });
   } catch (e: any) {

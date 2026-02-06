@@ -260,6 +260,7 @@ function parsePostsFromHtml(html: string, username: string): Post[] {
 }
 
 
+/** Fast path: one browser session, one page load – profile + recent in one go (like TikTok). */
 export async function fetchXProfileAndRecent(target: string, limit: number): Promise<{ profile: Profile; recent: Post[] }> {
   const username = extractUsername(target);
   const profileUrl = `https://x.com/${username}`;
@@ -343,6 +344,7 @@ const INITIAL_WAIT_MS = 5000;
 const MAX_NO_NEW_TWEETS = 5;
 const MAX_SCROLL_ATTEMPTS = 500;
 
+/** Fetch ALL tweets from first to latest by continuously scrolling and loading more */
 export async function fetchXAllPosts(target: string): Promise<Post[]> {
   const username = extractUsername(target);
   const profileUrl = `https://x.com/${username}`;
@@ -378,9 +380,11 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
 
     logger.info({ username }, "[X] Starting continuous scroll to load all tweets");
 
+    // Continuously scroll and collect tweet IDs
     while (scrollAttempts < MAX_SCROLL_ATTEMPTS && noNewTweetsCount < MAX_NO_NEW_TWEETS) {
       scrollAttempts++;
       
+      // Scroll down multiple times to trigger lazy loading
       for (let scrollStep = 0; scrollStep < 3; scrollStep++) {
         await page.evaluate(() => {
           window.scrollTo(0, document.body.scrollHeight);
@@ -388,8 +392,10 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
         await delay(SCROLL_DELAY_MS);
       }
       
+      // Wait for content to load
       await delay(3000);
       
+      // Get current tweet IDs from page
       const currentTweetIds = await page.evaluate(() => {
         const ids = new Set<string>();
         document.querySelectorAll('a[href*="/status/"]').forEach((el) => {
@@ -406,6 +412,7 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
         return Array.from(ids);
       });
 
+      // Add new tweet IDs
       let newTweetsFound = 0;
       for (const id of currentTweetIds) {
         if (!seenTweetIds.has(id)) {
@@ -421,6 +428,7 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
         noNewTweetsCount++;
       }
 
+      // Check if we've reached the end
       if (seenTweetIds.size === lastTweetCount) {
         noNewTweetsCount++;
       } else {
@@ -428,6 +436,7 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
         noNewTweetsCount = 0;
       }
 
+      // Log progress every 10 scrolls
       if (scrollAttempts % 10 === 0) {
         logger.info({ username, totalTweets: seenTweetIds.size, scrollAttempts, noNewTweetsCount }, "[X] Scrolling progress");
       }
@@ -435,9 +444,11 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
 
     logger.info({ username, totalTweets: seenTweetIds.size }, "[X] Finished scrolling, extracting tweet details from page");
 
+    // Get final HTML with all loaded tweets
     await delay(3000);
     let html = await page.content();
     
+    // Try scrolling one more time and getting HTML again
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await delay(2000);
     html = await page.content();
@@ -445,12 +456,14 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
     const allPosts = parsePostsFromHtml(html, username);
     const allPostsMap = new Map<string, Post>();
     
+    // Add posts from parsing
     for (const post of allPosts) {
       if (seenTweetIds.has(post.id)) {
         allPostsMap.set(post.id, post);
       }
     }
 
+    // Ensure all seen tweet IDs are in the result
     for (const tweetId of seenTweetIds) {
       if (!allPostsMap.has(tweetId)) {
         allPostsMap.set(tweetId, {
