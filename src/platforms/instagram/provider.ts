@@ -1,6 +1,7 @@
 import axios from "axios";
 import type { Profile, Post } from "../../store/types.js";
 
+/** Map Apify/post item to our Post type (supports multiple actor output shapes). */
 function mapPost(p: {
   shortCode?: string;
   id?: string;
@@ -20,7 +21,9 @@ function mapPost(p: {
   };
 }
 
-const APIDOJO_MAX_POSTS = 10_000_000;
+/** Max posts when using Apidojo (respects limit; production-ready). */
+const APIDOJO_MAX_POSTS = 500;
+/** Max posts for legacy Apify post scraper (often capped ~12 in practice). */
 const LEGACY_MAX_POSTS = 100;
 
 export async function fetchInstagramViaProvider(
@@ -34,6 +37,7 @@ export async function fetchInstagramViaProvider(
 
   const safeLimit = Math.max(1, Math.min(limit, APIDOJO_MAX_POSTS));
 
+  // 1) Profile from Profile Scraper (bio, name, etc.)
   const profileRes = await axios.post(
     "https://api.apify.com/v2/acts/apify~instagram-profile-scraper/run-sync-get-dataset-items",
     {
@@ -62,6 +66,7 @@ export async function fetchInstagramViaProvider(
     isPrivate: !!profileData.isPrivate,
   };
 
+  // 2) Posts: prefer Apidojo (limit respected; production-ready). Fallback: Apify post scraper → profile latestPosts (~12).
   let recent: Post[] = [];
 
   const runApidojoPosts = async () =>
@@ -113,6 +118,7 @@ export async function fetchInstagramViaProvider(
     }
   }
 
+  // Pinned: use Apify pinned if present, else first recent (Instagram often shows pinned first in list)
   let pinned: Post | null = null;
   const pinnedFromProfile = profileData.pinnedPost ?? profileData.pinned ?? profileData.highlightPost;
   if (pinnedFromProfile && typeof pinnedFromProfile === "object") {

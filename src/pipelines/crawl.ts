@@ -97,8 +97,9 @@ async function runJob(jobId: string) {
     else if (platform === "tiktok") {
       logger.info({ target }, "[TikTok] crawl started");
     
+      // Fetch profile first, then all videos if needed
       const profileAndRecent = await runLimited("tiktok", () =>
-        fetchTikTokProfileAndRecent(target, recentLimit < FETCH_ALL_LIMIT ? recentLimit : 50)
+        fetchTikTokProfileAndRecent(target, recentLimit < FETCH_ALL_LIMIT ? recentLimit : FETCH_ALL_LIMIT)
       );
     
       profile = profileAndRecent.profile;

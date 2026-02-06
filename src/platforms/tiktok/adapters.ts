@@ -607,77 +607,73 @@ export async function fetchTikTokAllVideos(target: string): Promise<Post[]> {
       return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     });
 
-    // Caption fetching disabled - too slow
-    // Captions will only be included if already present in hydration data from profile page
-    logger.info({ username, totalPosts: allPosts.length, withCaptions: allPosts.filter((p) => p.text && String(p.text).trim()).length }, "[TikTok] Skipping caption fetch (disabled for performance)");
-
-    // // Fetch captions for videos that don't have them
-    // // First try HTTP (faster), then browser mode if needed
-    // const needCaption = allPosts.filter((p) => !p.text || !String(p.text).trim());
-    // if (needCaption.length > 0) {
-    //   logger.info({ username, needCaption: needCaption.length }, "[TikTok] Starting caption fetch");
-    //   
-    //   // Try HTTP first (faster, but may be blocked)
-    //   const CONCURRENCY_HTTP = 4;
-    //   let httpFilled = 0;
-    //   for (let i = 0; i < needCaption.length; i += CONCURRENCY_HTTP) {
-    //     const chunk = needCaption.slice(i, i + CONCURRENCY_HTTP).filter((p) => !p.text || !String(p.text).trim());
-    //     if (chunk.length === 0) break;
-    //     
-    //     const results = await Promise.all(
-    //       chunk.map((post) => fetchVideoCaptionHttp(username, post.id))
-    //     );
-    //     chunk.forEach((post, j) => {
-    //       const caption = results[j];
-    //       if (caption) {
-    //         post.text = caption;
-    //         httpFilled++;
-    //       }
-    //     });
-    //     if (i + CONCURRENCY_HTTP < needCaption.length) await delay(600);
-    //     
-    //     // Log progress every 20 videos
-    //     if ((i + CONCURRENCY_HTTP) % 20 === 0 || i + CONCURRENCY_HTTP >= needCaption.length) {
-    //       const filled = allPosts.filter((p) => p.text && String(p.text).trim()).length;
-    //       logger.info({ username, filled, total: allPosts.length, progress: `${Math.min(i + CONCURRENCY_HTTP, needCaption.length)}/${needCaption.length}` }, "[TikTok] Caption fetch progress (HTTP)");
-    //     }
-    //   }
-    //   
-    //   if (httpFilled > 0) {
-    //     logger.info({ username, httpFilled }, "[TikTok] Captions filled via HTTP");
-    //   }
-    //   
-    //   // For remaining videos without captions, use browser mode (slower but more reliable)
-    //   const stillNeedCaption = allPosts.filter((p) => !p.text || !String(p.text).trim());
-    //   if (stillNeedCaption.length > 0) {
-    //     logger.info({ username, remaining: stillNeedCaption.length }, "[TikTok] Fetching remaining captions with browser mode");
-    //     const CONCURRENCY_BROWSER = 2;
-    //     for (let i = 0; i < stillNeedCaption.length; i += CONCURRENCY_BROWSER) {
-    //       const chunk = stillNeedCaption.slice(i, i + CONCURRENCY_BROWSER);
-    //       const results = await Promise.all(
-    //         chunk.map((post) => fetchVideoDescription(username, post.id))
-    //       );
-    //       chunk.forEach((post, j) => {
-    //         const caption = results[j];
-    //         if (caption) post.text = caption;
-    //       });
-    //       if (i + CONCURRENCY_BROWSER < stillNeedCaption.length) await delay(1500);
-    //       
-    //       // Log progress every 10 videos
-    //       if ((i + CONCURRENCY_BROWSER) % 10 === 0 || i + CONCURRENCY_BROWSER >= stillNeedCaption.length) {
-    //         const filled = allPosts.filter((p) => p.text && String(p.text).trim()).length;
-    //         logger.info({ username, filled, total: allPosts.length, progress: `${Math.min(i + CONCURRENCY_BROWSER, stillNeedCaption.length)}/${stillNeedCaption.length}` }, "[TikTok] Caption fetch progress (Browser)");
-    //       }
-    //     }
-    //   }
-    //   
-    //   const finalFilled = allPosts.filter((p) => p.text && String(p.text).trim()).length;
-    //   if (finalFilled > 0) {
-    //     logger.info({ username, finalFilled, total: allPosts.length }, "[TikTok] Caption fetching completed");
-    //   } else {
-    //     logger.warn({ username, total: allPosts.length }, "[TikTok] No captions were fetched - TikTok may be blocking");
-    //   }
-    // }
+    // Fetch captions for videos that don't have them
+    // First try HTTP (faster), then browser mode if needed
+    const needCaption = allPosts.filter((p) => !p.text || !String(p.text).trim());
+    if (needCaption.length > 0) {
+      logger.info({ username, needCaption: needCaption.length }, "[TikTok] Starting caption fetch");
+      
+      // Try HTTP first (faster, but may be blocked)
+      const CONCURRENCY_HTTP = 4;
+      let httpFilled = 0;
+      for (let i = 0; i < needCaption.length; i += CONCURRENCY_HTTP) {
+        const chunk = needCaption.slice(i, i + CONCURRENCY_HTTP).filter((p) => !p.text || !String(p.text).trim());
+        if (chunk.length === 0) break;
+        
+        const results = await Promise.all(
+          chunk.map((post) => fetchVideoCaptionHttp(username, post.id))
+        );
+        chunk.forEach((post, j) => {
+          const caption = results[j];
+          if (caption) {
+            post.text = caption;
+            httpFilled++;
+          }
+        });
+        if (i + CONCURRENCY_HTTP < needCaption.length) await delay(600);
+        
+        // Log progress every 20 videos
+        if ((i + CONCURRENCY_HTTP) % 20 === 0 || i + CONCURRENCY_HTTP >= needCaption.length) {
+          const filled = allPosts.filter((p) => p.text && String(p.text).trim()).length;
+          logger.info({ username, filled, total: allPosts.length, progress: `${Math.min(i + CONCURRENCY_HTTP, needCaption.length)}/${needCaption.length}` }, "[TikTok] Caption fetch progress (HTTP)");
+        }
+      }
+      
+      if (httpFilled > 0) {
+        logger.info({ username, httpFilled }, "[TikTok] Captions filled via HTTP");
+      }
+      
+      // For remaining videos without captions, use browser mode (slower but more reliable)
+      const stillNeedCaption = allPosts.filter((p) => !p.text || !String(p.text).trim());
+      if (stillNeedCaption.length > 0) {
+        logger.info({ username, remaining: stillNeedCaption.length }, "[TikTok] Fetching remaining captions with browser mode");
+        const CONCURRENCY_BROWSER = 2;
+        for (let i = 0; i < stillNeedCaption.length; i += CONCURRENCY_BROWSER) {
+          const chunk = stillNeedCaption.slice(i, i + CONCURRENCY_BROWSER);
+          const results = await Promise.all(
+            chunk.map((post) => fetchVideoDescription(username, post.id))
+          );
+          chunk.forEach((post, j) => {
+            const caption = results[j];
+            if (caption) post.text = caption;
+          });
+          if (i + CONCURRENCY_BROWSER < stillNeedCaption.length) await delay(1500);
+          
+          // Log progress every 10 videos
+          if ((i + CONCURRENCY_BROWSER) % 10 === 0 || i + CONCURRENCY_BROWSER >= stillNeedCaption.length) {
+            const filled = allPosts.filter((p) => p.text && String(p.text).trim()).length;
+            logger.info({ username, filled, total: allPosts.length, progress: `${Math.min(i + CONCURRENCY_BROWSER, stillNeedCaption.length)}/${stillNeedCaption.length}` }, "[TikTok] Caption fetch progress (Browser)");
+          }
+        }
+      }
+      
+      const finalFilled = allPosts.filter((p) => p.text && String(p.text).trim()).length;
+      if (finalFilled > 0) {
+        logger.info({ username, finalFilled, total: allPosts.length }, "[TikTok] Caption fetching completed");
+      } else {
+        logger.warn({ username, total: allPosts.length }, "[TikTok] No captions were fetched - TikTok may be blocking");
+      }
+    }
 
     logger.info(
       {

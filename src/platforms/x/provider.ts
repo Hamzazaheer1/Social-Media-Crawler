@@ -3,7 +3,7 @@ import type { Profile, Post } from "../../store/types.js";
 
 const DEFAULT_ACTOR = "apidojo~twitter-profile-scraper";
 
-const safeTweetLimit = (n: number) => Math.max(10, Math.min(n, 100));
+const safeTweetLimit = (n: number) => Math.max(10, n); // Removed 100 max limit for unlimited fetching
 
 function toPost(t: any, username: string): Post {
   return {

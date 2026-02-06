@@ -3,16 +3,15 @@ import { createHttpClient } from "../../core/http.js";
 import { logger } from "../../core/logger.js";
 import { load } from "cheerio";
 import puppeteer from "puppeteer";
+import { fetchInstagramViaProvider } from "./provider.js";
 
 const http = createHttpClient();
-// YouTube-style: try HTTP first (fast). Browser only when HTTP fails or for "fetch all".
 const USE_BROWSER_DEFAULT = process.env.USE_BROWSER_SCRAPING === "true";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Extract username from handle or URL
 function extractUsername(target: string): string {
   let clean = target.replace(/^@/, "").trim();
 
@@ -24,17 +23,14 @@ function extractUsername(target: string): string {
   return clean;
 }
 
-// Instagram shortCode validation (alphanumeric, typically 11 chars)
 function isInstagramShortCode(id: unknown): boolean {
   if (id == null) return false;
   const s = String(id).trim();
   return /^[a-zA-Z0-9_-]{8,}$/.test(s);
 }
 
-// Parse Instagram's __additionalDataLoaded, window._sharedData, or similar embedded JSON
 function parseInstagramData(html: string): Record<string, unknown> | null {
   try {
-    // Try window._sharedData (classic; often in first response)
     const matchShared = html.match(/window\._sharedData\s*=\s*({[\s\S]*?});\s*<\/script>/);
     if (matchShared?.[1]) {
       try {
@@ -42,7 +38,6 @@ function parseInstagramData(html: string): Record<string, unknown> | null {
       } catch {}
     }
 
-    // Try __additionalDataLoaded
     const match1 = html.match(/window\.__additionalDataLoaded\([^,]+,\s*({[\s\S]*?})\);?\s*<\/script>/);
     if (match1?.[1]) {
       try {
@@ -50,7 +45,6 @@ function parseInstagramData(html: string): Record<string, unknown> | null {
       } catch {}
     }
 
-    // Try require("ScheduledServerResponse")-style payload (newer IG)
     const matchReq = html.match(/require\("ScheduledServerResponse"\)\.handle\(([\s\S]*?)\);?\s*<\/script>/);
     if (matchReq?.[1]) {
       try {
@@ -58,7 +52,6 @@ function parseInstagramData(html: string): Record<string, unknown> | null {
       } catch {}
     }
 
-    // JSON-LD fallback
     const jsonLdMatch = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/);
     if (jsonLdMatch?.[1]) {
       try {
@@ -69,12 +62,23 @@ function parseInstagramData(html: string): Record<string, unknown> | null {
   return null;
 }
 
-// Extract profile info from HTML
+function cleanBio(bio: string | null): string | null {
+  if (!bio) return null;
+  // Remove followers/following info and common patterns
+  let cleaned = bio
+    .replace(/\d+[\s,.]*\d*\s*(followers?|following|posts?)/gi, '')
+    .replace(/followers?|following|posts?/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Also check if bio contains only numbers and stats
+  if (/^\d+[\s,.]*\d*\s*$/.test(cleaned)) return null;
+  return cleaned.length > 0 ? cleaned : null;
+}
+
 function parseProfileFromHtml(html: string, username: string): Profile {
   const $ = load(html);
   const data = parseInstagramData(html);
 
-  // Try to get from _sharedData
   let displayName: string | null = null;
   let bio: string | null = null;
   let isPrivate = false;
@@ -96,7 +100,6 @@ function parseProfileFromHtml(html: string, username: string): Profile {
     }
   }
 
-  // Fallback to meta tags
   if (!displayName) {
     const ogTitle = $('meta[property="og:title"]').attr("content");
     if (ogTitle) {
@@ -111,13 +114,11 @@ function parseProfileFromHtml(html: string, username: string): Profile {
     }
   }
 
-  // Fallback to HTML selectors
   if (!displayName) {
     const h1 = $("h1, h2").first().text().trim();
     if (h1 && !h1.includes("Instagram")) displayName = h1;
   }
 
-  // Check for private account indicators
   if (!isPrivate) {
     const pageText = html.toLowerCase();
     isPrivate = pageText.includes("this account is private") || 
@@ -130,6 +131,9 @@ function parseProfileFromHtml(html: string, username: string): Profile {
   links.push(profileLink);
   if (externalUrl) links.push(externalUrl);
 
+  // Clean bio to remove followers/following info
+  bio = cleanBio(bio);
+
   return {
     handle: username,
     displayName: displayName || username,
@@ -140,7 +144,6 @@ function parseProfileFromHtml(html: string, username: string): Profile {
   };
 }
 
-// Extract posts from HTML
 function parsePostsFromHtml(html: string, username: string): Post[] {
   const $ = load(html);
   const posts: Post[] = [];
@@ -157,7 +160,6 @@ function parsePostsFromHtml(html: string, username: string): Post[] {
     });
   };
 
-  // Extract from links
   $('a[href*="/p/"]').each((_, el) => {
     const $el = $(el);
     const href = $el.attr("href");
@@ -169,7 +171,6 @@ function parsePostsFromHtml(html: string, username: string): Post[] {
     const shortCode = match[1];
     const url = href.startsWith("http") ? href : `https://www.instagram.com${href}`;
 
-    // Try to get caption from nearby elements
     const container = $el.closest("article, div[role='article'], div");
     const caption = container.find("span, div").filter((_, elem) => {
       const text = $(elem).text().trim();
@@ -179,7 +180,6 @@ function parsePostsFromHtml(html: string, username: string): Post[] {
     addPost(shortCode, url, caption || null, null);
   });
 
-  // Extract from HTML content (regex fallback)
   const regex = /\/p\/([a-zA-Z0-9_-]{8,})/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(html)) !== null) {
@@ -189,7 +189,6 @@ function parsePostsFromHtml(html: string, username: string): Post[] {
     }
   }
 
-  // Try to extract from JSON data
   const data = parseInstagramData(html);
   if (data) {
     const entryData = (data as Record<string, unknown>).entry_data as Record<string, unknown> | undefined;
@@ -229,7 +228,6 @@ const INSTAGRAM_HTTP_HEADERS = {
   "Sec-Fetch-Mode": "navigate",
 };
 
-/** YouTube-style: fetch profile page via HTTP only (no browser). Returns HTML or null on failure. */
 async function fetchProfileHtmlViaHttp(profileUrl: string): Promise<string | null> {
   try {
     const response = await http.get(profileUrl, {
@@ -239,7 +237,6 @@ async function fetchProfileHtmlViaHttp(profileUrl: string): Promise<string | nul
     });
     if (!response?.data || (response.status !== 200)) return null;
     const html = typeof response.data === "string" ? response.data : JSON.stringify(response.data);
-    // Login wall or empty content
     if (html.length < 5000 || html.includes("login_and_signup") || html.includes('"require_login":true')) return null;
     return html;
   } catch {
@@ -247,7 +244,6 @@ async function fetchProfileHtmlViaHttp(profileUrl: string): Promise<string | nul
   }
 }
 
-/** Fetch profile + recent posts. YouTube-style: try HTTP first (fast), fall back to browser only if HTTP fails. */
 export async function fetchInstagramProfileAndRecent(target: string, limit: number): Promise<{ profile: Profile; recent: Post[] }> {
   const username = extractUsername(target);
   const profileUrl = `https://www.instagram.com/${username}/`;
@@ -255,7 +251,6 @@ export async function fetchInstagramProfileAndRecent(target: string, limit: numb
   let html: string | null = null;
   let source: "http" | "browser" = "http";
 
-  // 1) Always try HTTP first (fast, like YouTube)
   if (!USE_BROWSER_DEFAULT) {
     html = await fetchProfileHtmlViaHttp(profileUrl);
     if (html) {
@@ -267,7 +262,6 @@ export async function fetchInstagramProfileAndRecent(target: string, limit: numb
     }
   }
 
-  // 2) Fall back to browser only when HTTP failed or USE_BROWSER_SCRAPING=true
   {
     const browser = await puppeteer.launch({
       headless: true,
@@ -323,7 +317,6 @@ export async function fetchInstagramProfileAndRecent(target: string, limit: numb
   return { profile, recent };
 }
 
-/** Fetch ALL posts by continuously scrolling (browser only; no HTTP API for full list). */
 export async function fetchInstagramAllPosts(target: string): Promise<Post[]> {
   const username = extractUsername(target);
   const profileUrl = `https://www.instagram.com/${username}/`;
@@ -345,27 +338,22 @@ export async function fetchInstagramAllPosts(target: string): Promise<Post[]> {
     
     logger.info({ username }, "[Instagram] Loading profile page to fetch all posts");
     await page.goto(profileUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await delay(3000); // Wait for initial content to load
+    await delay(3000);
     
-    // Wait for posts grid to appear
     try {
       await page.waitForSelector('a[href*="/p/"], article, main', { timeout: 10000 });
-      await delay(2000); // Extra wait for grid to render
+      await delay(2000);
     } catch (_) {
       logger.warn({ username }, "No posts found on profile page - might be login wall or private account");
     }
     
-    // Wait a bit for page to fully load
     await delay(2000);
     
-    // Extract posts from initial page load (no scrolling)
     const html = await page.content();
 
-    // Try to extract bio directly from browser DOM (more reliable than HTML parsing)
     let bioFromBrowser: string | null = null;
     try {
       bioFromBrowser = await page.evaluate(() => {
-        // Try multiple selectors to find bio
         const selectors = [
           'header section h1 + div span',
           'header section div[dir="auto"] span',
@@ -378,7 +366,6 @@ export async function fetchInstagramAllPosts(target: string): Promise<Post[]> {
           const elements = document.querySelectorAll(selector);
           for (const el of Array.from(elements)) {
             const text = (el.textContent || '').trim();
-            // Skip if it's stats text
             if (text && !/\d+[\s,.]*\d*\s*(followers?|following|posts?)/i.test(text) &&
                 !text.toLowerCase().includes('see instagram') &&
                 text.length > 5 && text.length < 500) {
@@ -389,29 +376,16 @@ export async function fetchInstagramAllPosts(target: string): Promise<Post[]> {
         return null;
       });
     } catch (_) {
-      // Fallback to HTML parsing
     }
     
-    // Parse posts and profile from HTML
     const allPosts = parsePostsFromHtml(html, username);
-    let profileFromBrowser = parseProfileFromHtml(html, username);
-    
-    // Use bio from browser DOM if available and better
-    if (bioFromBrowser && bioFromBrowser.length > 5) {
-      profileFromBrowser.bio = bioFromBrowser;
-      profileFromBrowser.about = bioFromBrowser;
-      logger.info({ username, bioLength: bioFromBrowser.length }, "[Instagram] Bio extracted from browser DOM");
-    }
     
     await browser.close();
 
-    // Instagram loads posts in reverse chronological order (newest first)
-    // To get first → last order (oldest first), we need to reverse
     const postsWithDates = allPosts.filter(p => p.createdAt);
     
     let finalSortedPosts: Post[];
     if (postsWithDates.length > 0) {
-      // Sort by creation date (oldest first) - most accurate
       finalSortedPosts = allPosts.sort((a, b) => {
         if (!a.createdAt && !b.createdAt) return 0;
         if (!a.createdAt) return 1;
@@ -447,11 +421,22 @@ export async function fetchInstagramAllPosts(target: string): Promise<Post[]> {
 export async function fetchInstagramProfile(target: string): Promise<Profile> {
   try {
     const username = extractUsername(target);
+    
+    // Try Apify first for bio (similar to posts)
+    if (process.env.APIFY_TOKEN) {
+      try {
+        const apifyResult = await fetchInstagramViaProvider(username, 1);
+        logger.info({ username, source: "apify" }, "Instagram profile (Apify)");
+        return apifyResult.profile;
+      } catch (error) {
+        logger.debug({ username, error: (error as { message?: string }).message }, "Apify failed, falling back to browser");
+      }
+    }
+
     const profileUrl = `https://www.instagram.com/${username}/`;
 
     let html: string;
 
-    // HTTP first (fast)
     if (!USE_BROWSER_DEFAULT) {
       const h = await fetchProfileHtmlViaHttp(profileUrl);
       if (h) return parseProfileFromHtml(h, username);
