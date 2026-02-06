@@ -523,29 +523,81 @@ async function findBlogPages(homepageUrl: string, html: string): Promise<string[
 }
 
 /**
- * Extract article URLs from a blog listing page.
- * Returns links that point to individual article pages (same domain), excluding nav, pagination, and the listing URL itself.
+ * Returns true when the listing URL is already a known blog (subdomain or path).
+ * In that case we accept article links without requiring /blog/ or /news/ in path (e.g. blog.cloudflare.com/post-slug/).
  */
-function extractArticleUrlsFromListing(html: string, listingUrl: string, baseOrigin: string): string[] {
+function isListingUrlBlogSite(listingUrl: string): boolean {
+  try {
+    const u = new URL(listingUrl);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname.toLowerCase();
+    if (/^blog\.|\.blog\./i.test(host)) return true;
+    if (/^news\.|\.news\./i.test(host)) return true;
+    if (/\/blog(\/|$)/i.test(path) || /\/news(\/|$)/i.test(path)) return true;
+    if (/\/articles?(\/|$)/i.test(path) || /\/posts?(\/|$)/i.test(path)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extract only blog/article URLs from a blog listing page.
+ * When listing is already a blog site (e.g. blog.cloudflare.com) or page was detected as blog listing, accept same-origin article links without path allowlist.
+ * Otherwise only links with /news/, /blog/, /articles/ etc. in path are included.
+ */
+function extractArticleUrlsFromListing(
+  html: string,
+  listingUrl: string,
+  baseOrigin: string,
+  options?: { listingDetectedAsBlog?: boolean }
+): string[] {
   const $ = load(html);
   const articleUrls = new Set<string>();
   const listingPath = new URL(listingUrl).pathname.replace(/\/?$/, "") || "/";
+  const listingIsBlogSite = isListingUrlBlogSite(listingUrl) || options?.listingDetectedAsBlog === true;
 
-  // Skip patterns: not an article link
-  const skipPathPatterns = [
-    /^\/$/,  // homepage
+  const blogPathPatterns = [
+    /\/news(\/|$)/i,
+    /\/blog(\/|$)/i,
+    /\/articles?(\/|$)/i,
+    /\/posts?(\/|$)/i,
+    /\/stories(\/|$)/i,
+    /\/journal(\/|$)/i,
+    /\/magazine(\/|$)/i,
+    /\/updates(\/|$)/i,
+    /\/post\//i,
+    /\/article\//i,
+    /\/press(\/|$)/i,
+    /\/media(\/|$)/i,
+  ];
+
+  const excludePathPatterns = [
+    /^\/$/,
     /\/page\/\d+/i,
     /\/tag\//i,
     /\/category\//i,
     /\/author\//i,
     /\/search/i,
-    /#/,
+    /\/product/i,
+    /\/products/i,
+    /\/about/i,
+    /\/contact/i,
+    /\/inquiry/i,
+    /\/contactus/i,
+    /\.pdf$/i,
+    /\/beautyinstrument/i,
+    /\/cart/i,
+    /\/account/i,
+    /\/login/i,
+    /\/signup/i,
+    /\/privacy/i,
+    /\/terms/i,
     /mailto:/i,
     /tel:/i,
     /javascript:/i,
   ];
 
-  // Prefer links inside main content / article cards (listing items)
   const contentRoots = $("main, [role='main'], .content, .posts, .blog-list, .article-list, #content");
   const searchRoot = contentRoots.length > 0 ? contentRoots.first() : $("body");
 
@@ -557,21 +609,21 @@ function extractArticleUrlsFromListing(html: string, listingUrl: string, baseOri
       const urlObj = new URL(fullUrl);
       const path = urlObj.pathname;
 
-      // Same origin only
-      const origin = urlObj.origin;
+      if (!path || path === "/" || path === listingPath || path.length < 2) return;
+
       const base = new URL(baseOrigin).origin;
+      const origin = urlObj.origin;
       if (origin !== base && origin.replace(/^https?:\/\//, "").replace(/^www\./, "") !== base.replace(/^https?:\/\//, "").replace(/^www\./, "")) return;
 
-      // Must look like an article URL (has path segment beyond listing)
-      if (!path || path === "/" || path === listingPath) return;
-      if (path.length < 2) return;
-      if (skipPathPatterns.some((p) => p.test(path))) return;
+      if (excludePathPatterns.some((p) => p.test(path) || p.test(fullUrl))) return;
 
-      // Exclude common non-article paths
-      const pathLower = path.toLowerCase();
-      if (/^\/(about|contact|privacy|terms|login|signup|cart|account|tag|category|author|page|search)(\/|$)/i.test(pathLower)) return;
-
-      articleUrls.add(fullUrl);
+      if (listingIsBlogSite) {
+        articleUrls.add(fullUrl);
+      } else {
+        const looksLikeBlog = blogPathPatterns.some((p) => p.test(path));
+        if (!looksLikeBlog) return;
+        articleUrls.add(fullUrl);
+      }
     } catch {}
   });
 
@@ -1443,7 +1495,7 @@ export async function fetchWebsiteContentViaListing(
   } = {}
 ): Promise<{ profile: Profile; posts: Post[]; meta: { listingUrl: string; articleUrlsFound: number; articlesFetched: number; errors: number } }> {
   const {
-    maxArticles = 50,
+    maxArticles = 0, // 0 = no limit, fetch all articles found
     scrollToLoad = true,
     maxScrolls = 15,
     respectRobotsTxt = true,
@@ -1496,9 +1548,14 @@ export async function fetchWebsiteContentViaListing(
     listingHtml = html;
   }
 
-  // Step 3: Extract article URLs from listing
-  const articleUrls = extractArticleUrlsFromListing(listingHtml, listingUrl, baseOrigin);
-  const uniqueUrls = Array.from(new Set(articleUrls)).slice(0, maxArticles);
+  // Step 3: Extract article URLs from listing (relax path check when page was detected as blog listing)
+  const listingDetectedAsBlog = blogDetection.isBlogListing || blogDetection.isBlog;
+  const articleUrls = extractArticleUrlsFromListing(listingHtml, listingUrl, baseOrigin, {
+    listingDetectedAsBlog,
+  });
+  const uniqueUrls = maxArticles > 0
+    ? Array.from(new Set(articleUrls)).slice(0, maxArticles)
+    : Array.from(new Set(articleUrls));
   onProgress?.({ phase: "extracted_articles", articleUrlsFound: uniqueUrls.length });
 
   const $listing = load(listingHtml);

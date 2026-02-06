@@ -203,6 +203,10 @@ paths:
                   format: uri
                   description: "Website homepage URL (e.g., https://example.com). The system will automatically detect and fetch all blogs with their content."
                   example: "https://example.com"
+                maxArticles:
+                  type: integer
+                  minimum: 1
+                  description: "Optional. If provided, only this many articles are fetched; otherwise all found articles are fetched."
             examples:
               fetch_all_blogs:
                 summary: "Fetch All Blogs Content"
@@ -254,31 +258,7 @@ paths:
                   error:
                     type: string
 
-  /api/health:
-    get:
-      tags: [System]
-      summary: Health Check
-      description: "Check if the service is running"
-      responses:
-        "200":
-          description: Service status
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: "ok"
-                  service:
-                    type: string
-                    example: "web-scraper-api"
-                  timestamp:
-                    type: string
-                    format: date-time
-                  message:
-                    type: string
-                    example: "Service is running"
+
 
 
 components:

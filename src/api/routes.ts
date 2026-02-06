@@ -118,9 +118,10 @@ router.post("/api/search/website", async (req, res) => {
 
 // POST /api/website/fetch - Fetch all blogs via listing flow
 // Flow: Website URL → Blog listing page → Extract article URLs → For each article: fetch full content (date, author, headings)
+// No limit: all articles found are fetched. Optional body: maxArticles (number) to cap how many to fetch.
 router.post("/api/website/fetch", async (req, res) => {
   try {
-    const { url } = req.body;
+    const { url, maxArticles: bodyMax } = req.body;
     
     // Validate URL
     if (!url || typeof url !== "string") {
@@ -135,19 +136,19 @@ router.post("/api/website/fetch", async (req, res) => {
     }
 
     const { fetchWebsiteContentViaListing } = await import("../platforms/website/adapters.js");
-    
     const result = await fetchWebsiteContentViaListing(url, {
-      maxArticles: 50,
       scrollToLoad: true,
       maxScrolls: 15,
       respectRobotsTxt: true,
+      ...(typeof bodyMax === "number" && bodyMax > 0 ? { maxArticles: Math.floor(bodyMax) } : {}),
     });
 
+    const blogPosts = result.posts;
     return res.json({
       url,
       profile: result.profile,
-      content: result.posts,
-      totalItems: result.posts.length,
+      blogs: blogPosts.length > 0 ? blogPosts : null,
+      other: null,
       listingUrl: result.meta.listingUrl,
       articleUrlsFound: result.meta.articleUrlsFound,
       articlesFetched: result.meta.articlesFetched,
@@ -161,17 +162,6 @@ router.post("/api/website/fetch", async (req, res) => {
   }
 });
 
-// GET /api/health - Health check
-router.get("/api/health", (req, res) => {
-  // Get queue size (number of running/queued jobs)
-  const { getJob } = require("../store/db.js");
-  // Simple health check - can be enhanced
-  return res.json({
-    status: "ok",
-    service: "web-scraper-api",
-    timestamp: new Date().toISOString(),
-    message: "Service is running",
-  });
-});
+
 
 export default router;
