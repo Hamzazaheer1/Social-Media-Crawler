@@ -9,8 +9,6 @@ tags:
     description: Social Media crawling (X/Instagram/TikTok/YouTube)
   - name: Website Crawl
     description: Website crawling with CSS selectors
-  - name: Website Results
-    description: Website crawl results and exports
   - name: Results
     description: General crawl results
   - name: System
