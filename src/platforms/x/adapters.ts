@@ -7,6 +7,13 @@ const STATE_PATH = "./storage/x_state.json";
 const HEADLESS = false;
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+
+function useGuestMode(): boolean {
+  if (process.env.X_USE_GUEST === "true" || process.env.X_USE_GUEST === "1") return true;
+  if (!fs.existsSync(STATE_PATH)) return true;
+  return false;
+}
+
 /* ================= HELPERS ================= */
 
 function extractUsername(target: string): string {
@@ -18,23 +25,23 @@ function extractUsername(target: string): string {
   return clean;
 }
 
-async function openLoggedInPage(): Promise<{ page: Page; close: () => Promise<void> }> {
-  if (!fs.existsSync(STATE_PATH)) {
-    throw new Error("❌ storage/x_state.json missing. Run x-auth-setup first.");
-  }
+async function openPage(): Promise<{ page: Page; close: () => Promise<void> }> {
+  const guest = useGuestMode();
+  if (guest) logger.info("[X] using guest mode (no login)");
 
   const browser = await chromium.launch({
     headless: HEADLESS,
     args: ["--disable-blink-features=AutomationControlled"],
   });
 
-  const context = await browser.newContext({
-    storageState: STATE_PATH,
+  const contextOptions: Parameters<typeof browser.newContext>[0] = {
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     viewport: { width: 1400, height: 900 },
-  });
+  };
+  if (!guest) contextOptions.storageState = STATE_PATH;
 
+  const context = await browser.newContext(contextOptions);
   const page = await context.newPage();
 
   return {
@@ -57,7 +64,7 @@ async function forceTweetsTab(page: Page, username: string) {
 
 export async function fetchXProfile(target: string): Promise<Profile> {
   const username = extractUsername(target);
-  const { page, close } = await openLoggedInPage();
+  const { page, close } = await openPage();
 
   try {
     logger.info({ username }, "[X PROFILE] loading profile");
@@ -101,7 +108,7 @@ export async function fetchXProfile(target: string): Promise<Profile> {
 
 export async function fetchXPinned(target: string): Promise<Post | null> {
   const username = extractUsername(target);
-  const { page, close } = await openLoggedInPage();
+  const { page, close } = await openPage();
 
   try {
     logger.info({ username }, "[X PINNED] checking pinned tweet");
@@ -138,7 +145,7 @@ export async function fetchXPinned(target: string): Promise<Post | null> {
 
 export async function fetchXAllPosts(target: string): Promise<Post[]> {
   const username = extractUsername(target);
-  const { page, close } = await openLoggedInPage();
+  const { page, close } = await openPage();
 
   try {
     await forceTweetsTab(page, username);

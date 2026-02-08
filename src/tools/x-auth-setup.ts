@@ -8,7 +8,7 @@ import fs from "fs";
 
   await page.goto("https://x.com/login", { waitUntil: "domcontentloaded" });
 
-  console.log("➡️ Login manually, phir terminal me ENTER press karo");
+  console.log("➡️ Login manually, then enter press");
 
   process.stdin.resume();
   await new Promise<void>((res) => process.stdin.once("data", () => res()));
