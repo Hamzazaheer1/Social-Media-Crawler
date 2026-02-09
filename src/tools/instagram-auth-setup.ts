@@ -13,7 +13,7 @@ const STATE_PATH = `${STATE_DIR}/instagram_state.json`;
 
   await page.goto("https://www.instagram.com/accounts/login/", { waitUntil: "domcontentloaded" });
 
-  console.log("➡️ Instagram pe login karo, phir terminal me ENTER press karo");
+  console.log("➡️ Login manually, then enter press");
 
   process.stdin.resume();
   await new Promise<void>((res) => process.stdin.once("data", () => res()));
@@ -21,5 +21,5 @@ const STATE_PATH = `${STATE_DIR}/instagram_state.json`;
   await context.storageState({ path: STATE_PATH });
   await browser.close();
 
-  console.log("✅ storage/instagram_state.json saved");
+  console.log("✅ storage/instagram_state.json saved, you can now use the bot");
 })();

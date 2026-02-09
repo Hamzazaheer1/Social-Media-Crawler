@@ -5,7 +5,7 @@ import { load } from "cheerio";
 import puppeteer from "puppeteer";
 
 const http = createHttpClient();
-const USE_BROWSER = process.env.USE_BROWSER_SCRAPING === "true" || true; // Default true for TikTok (JS-rendered)
+const USE_BROWSER = process.env.USE_BROWSER_SCRAPING === "true" || true; 
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -361,7 +361,6 @@ function parseProfilePageHtml(html: string, username: string): { profile: Profil
   return { profile, posts };
 }
 
-/** Fast path: one browser session, one page load – profile + recent in one go (like YouTube). */
 export async function fetchTikTokProfileAndRecent(target: string, limit: number): Promise<{ profile: Profile; recent: Post[] }> {
   const username = extractUsername(target);
   const profileUrl = `https://www.tiktok.com/@${username}`;
@@ -430,7 +429,6 @@ export async function fetchTikTokProfileAndRecent(target: string, limit: number)
   return { profile, recent };
 }
 
-/** Fetch ALL videos from first to latest by continuously scrolling and loading more */
 export async function fetchTikTokAllVideos(target: string): Promise<Post[]> {
   const username = extractUsername(target);
   const profileUrl = `https://www.tiktok.com/@${username}`;
@@ -468,28 +466,24 @@ export async function fetchTikTokAllVideos(target: string): Promise<Post[]> {
     const seenVideoIds = new Set<string>();
     let lastVideoCount = 0;
     let noNewVideosCount = 0;
-    const MAX_NO_NEW_VIDEOS = 5; // Stop after 5 consecutive scrolls with no new videos (increased)
+    const MAX_NO_NEW_VIDEOS = 5; 
     let scrollAttempts = 0;
-    const MAX_SCROLL_ATTEMPTS = 500; // Safety limit (increased)
+    const MAX_SCROLL_ATTEMPTS = 500; 
 
     logger.info({ username }, "[TikTok] Starting continuous scroll to load all videos");
 
-    // Continuously scroll and collect video IDs
     while (scrollAttempts < MAX_SCROLL_ATTEMPTS && noNewVideosCount < MAX_NO_NEW_VIDEOS) {
       scrollAttempts++;
       
-      // Scroll down multiple times to trigger lazy loading
       for (let scrollStep = 0; scrollStep < 3; scrollStep++) {
         await page.evaluate(() => {
           window.scrollTo(0, document.body.scrollHeight);
         });
-        await delay(1000); // Wait between scrolls
+        await delay(1000); 
       }
       
-      // Wait for content to load
-      await delay(3000); // Increased wait time
+      await delay(3000); 
       
-      // Get current video IDs from page
       const currentVideoIds = await page.evaluate(() => {
         const ids = new Set<string>();
         // Extract from links

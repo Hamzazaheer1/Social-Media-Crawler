@@ -13,7 +13,7 @@ const CrawlSchema = z.object({
     includeRecent: z.boolean().optional(),
     recentLimit: z.number().int().min(0).max(10_000_000).optional(),
     proofKeywords: z.array(z.string()).optional(),
-    // Website-specific options
+
     contentSelector: z.string().optional(),
     titleSelector: z.string().optional(),
     textSelector: z.string().optional(),
@@ -39,7 +39,6 @@ router.post("/crawl", (req, res) => {
   return res.status(201).json({ jobId, status: "queued" });
 });
 
-// Keep /crawl for all platforms (non-website)
 router.get("/crawl/:jobId", (req, res) => {
   const job = getJob(req.params.jobId);
   if (!job) return res.status(404).json({ error: "Not found" });
@@ -72,8 +71,6 @@ return res.json({
 }
 });
 
-// POST /api/search/website - Keyword search on website
-// Provide website homepage URL - system will automatically detect and search in all blogs
 router.post("/api/search/website", async (req, res) => {
   try {
     const { url, keywords } = req.body;
@@ -84,7 +81,6 @@ router.post("/api/search/website", async (req, res) => {
       return res.status(400).json({ error: "Keywords array is required" });
     }
 
-    // Validate URL format
     try {
       new URL(url);
     } catch {
@@ -92,14 +88,13 @@ router.post("/api/search/website", async (req, res) => {
     }
 
     const { fetchWebsiteContent } = await import("../platforms/website/adapters.js");
-    
-    // Auto-detect blogs from website homepage and search in all content
+
     const result = await fetchWebsiteContent(url, {
       filterKeywords: keywords,
       scrollToLoad: true,
       maxScrolls: 15,
       limit: 500,
-      maxPages: 10, // Auto-detect and crawl up to 10 blog pages
+      maxPages: 10,
     });
 
     return res.json({
@@ -116,19 +111,15 @@ router.post("/api/search/website", async (req, res) => {
   }
 });
 
-// POST /api/website/fetch - Fetch all blogs via listing flow
-// Flow: Website URL → Blog listing page → Extract article URLs → For each article: fetch full content (date, author, headings)
-// No limit: all articles found are fetched. Optional body: maxArticles (number) to cap how many to fetch.
+
 router.post("/api/website/fetch", async (req, res) => {
   try {
     const { url, maxArticles: bodyMax } = req.body;
     
-    // Validate URL
     if (!url || typeof url !== "string") {
       return res.status(400).json({ error: "URL is required" });
     }
-    
-    // Validate URL format
+
     try {
       new URL(url);
     } catch {

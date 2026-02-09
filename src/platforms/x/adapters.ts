@@ -159,7 +159,7 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
 
     logger.info({ username }, "[X ALL] cursor-based full history started");
 
-    while (stagnantRounds < 5) {
+    while (stagnantRounds < 3) {
       round++;
 
       // 1️⃣ Extract visible tweets

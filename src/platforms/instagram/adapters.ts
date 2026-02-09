@@ -5,7 +5,7 @@ import fs from "fs";
 import { load } from "cheerio";
 
 const STATE_PATH = "./storage/instagram_state.json";
-const HEADLESS = process.env.HEADLESS !== "false";
+const HEADLESS = process.env.HEADLESS == "false";
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function useGuestMode(): boolean {
@@ -14,7 +14,6 @@ function useGuestMode(): boolean {
   return false;
 }
 
-/* ================= HELPERS ================= */
 
 function extractUsername(target: string): string {
   let clean = target.replace(/^@/, "").trim();
@@ -66,8 +65,6 @@ async function forceProfileTab(page: Page, username: string) {
   await delay(4000);
 }
 
-/* ================= PARSING (from HTML / DOM) ================= */
-
 function parseInstagramData(html: string): Record<string, unknown> | null {
   try {
     const m = html.match(/window\._sharedData\s*=\s*({[\s\S]*?});\s*<\/script>/);
@@ -80,7 +77,6 @@ function parseInstagramData(html: string): Record<string, unknown> | null {
   return null;
 }
 
-/** True if string looks like "123K Followers, 456 Following, 789 Posts" (stats line), not real bio */
 function isLikelyStatsDescription(s: string): boolean {
   const t = s.trim();
   if (t.length < 5) return false;
@@ -91,14 +87,12 @@ function isLikelyStatsDescription(s: string): boolean {
   return (hasFollowers && hasFollowing) || mostlyNumbersAndStats;
 }
 
-/** Strip " (@username)" or " (username)" from end of display name (og:title often has this). */
 function cleanDisplayName(name: string | null, username: string): string | null {
   if (!name) return null;
   const t = name.replace(/\s*\(@?[\w_.]+\)\s*$/i, "").trim();
   return t.length > 0 ? t : null;
 }
 
-/** True if text is just the handle/username, not a real bio. */
 function isJustHandle(text: string | null, username: string): boolean {
   if (!text) return true;
   const t = text.trim();
@@ -106,7 +100,6 @@ function isJustHandle(text: string | null, username: string): boolean {
   return t === handle || t === username || t === `@${handle}`;
 }
 
-/** Strip username, display name, "Followed by...", and story highlights so only the actual bio text remains. */
 function stripBioOnly(bio: string, username: string, displayName: string | null): string {
   const handle = username.replace(/^@/, "");
   let t = bio.trim();
@@ -237,8 +230,6 @@ function parsePostsFromHtml(html: string, username: string): Post[] {
   return posts;
 }
 
-/* ================= PROFILE ================= */
-
 export async function fetchInstagramProfile(target: string): Promise<Profile> {
   const username = extractUsername(target);
   const { page, close } = await openPage();
@@ -321,8 +312,6 @@ export async function fetchInstagramProfile(target: string): Promise<Profile> {
   }
 }
 
-/* ================= PINNED (first post) ================= */
-
 export async function fetchInstagramPinned(target: string): Promise<Post | null> {
   const username = extractUsername(target);
   const { page, close } = await openPage();
@@ -353,8 +342,6 @@ export async function fetchInstagramPinned(target: string): Promise<Post | null>
   }
 }
 
-/* ================= PROFILE + RECENT ================= */
-
 export async function fetchInstagramProfileAndRecent(target: string, limit: number): Promise<{ profile: Profile; recent: Post[] }> {
   const username = extractUsername(target);
   const { page, close } = await openPage();
@@ -376,7 +363,6 @@ export async function fetchInstagramProfileAndRecent(target: string, limit: numb
   }
 }
 
-/** Extract actual caption from Instagram og:description (e.g. "83K likes, 316 comments - user on Date: \"caption\"." → "caption"). */
 function extractCaptionFromOgDescription(og: string): string {
   const colonIdx = og.lastIndexOf(":");
   if (colonIdx === -1) return og;
@@ -387,7 +373,6 @@ function extractCaptionFromOgDescription(og: string): string {
   return og;
 }
 
-/** Fetch caption for a single post by opening its page (og:description or DOM) — same idea as Twitter fetching tweet text. */
 async function fetchCaptionForPost(page: Page, postUrl: string): Promise<string | null> {
   try {
     await page.goto(postUrl, { waitUntil: "domcontentloaded", timeout: 6000 });
@@ -409,10 +394,7 @@ async function fetchCaptionForPost(page: Page, postUrl: string): Promise<string 
   }
 }
 
-// Fetch caption for posts that don't have it (open each post page). 0 = fetch ALL; N = first N only. Set INSTAGRAM_FETCH_CAPTIONS=50 to limit.
 const MAX_CAPTION_FETCH = Math.max(0, parseInt(process.env.INSTAGRAM_FETCH_CAPTIONS ?? "0", 10));
-
-/* ================= ALL POSTS (FULL HISTORY) ================= */
 
 export async function fetchInstagramAllPosts(target: string): Promise<Post[]> {
   const username = extractUsername(target);
@@ -426,7 +408,7 @@ export async function fetchInstagramAllPosts(target: string): Promise<Post[]> {
     let round = 0;
     logger.info({ username }, "[Instagram ALL] scroll-based full history started");
 
-    while (stagnantRounds < 5) {
+    while (stagnantRounds < 3) {
       round++;
       const batch = await page.evaluate(() => {
         return Array.from(document.querySelectorAll('a[href*="/p/"]'))
@@ -492,12 +474,11 @@ export async function fetchInstagramAllPosts(target: string): Promise<Post[]> {
             { timeout: 20000 }
           );
         } catch {
-          /* ignore */
+            // ignore network slow / instagram lazy-load  
         }
       }
     }
 
-    // Extra scrolls so we don't miss last 1–3 posts (26→24, 159→158 etc.)
     for (let extra = 0; extra < 2; extra++) {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await delay(4000);

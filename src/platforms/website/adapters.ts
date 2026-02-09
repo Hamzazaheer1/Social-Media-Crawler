@@ -7,16 +7,12 @@ import { checkRobotsTxt } from "./robots.js";
 
 const http = createHttpClient();
 
-// Simple in-memory cache
 const pageCache = new Map<string, { html: string; expires: number }>();
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Extract domain name from URL for use as handle
- */
 function extractDomain(url: string): string {
   try {
     const urlObj = new URL(url);
@@ -26,9 +22,6 @@ function extractDomain(url: string): string {
   }
 }
 
-/**
- * Normalize URL (add protocol if missing, resolve relative URLs)
- */
 function normalizeUrl(url: string, baseUrl: string): string {
   try {
     return new URL(url, baseUrl).href;
@@ -37,13 +30,9 @@ function normalizeUrl(url: string, baseUrl: string): string {
   }
 }
 
-/**
- * Extract date from text or element
- */
 function extractDate(text: string | null, element: { attr: (name: string) => string | undefined } | null = null): string | null {
   if (!text) return null;
   
-  // Try to find date in text
   const datePatterns = [
     /\d{4}-\d{2}-\d{2}/, // YYYY-MM-DD
     /\d{2}\/\d{2}\/\d{4}/, // MM/DD/YYYY
@@ -63,7 +52,6 @@ function extractDate(text: string | null, element: { attr: (name: string) => str
     }
   }
 
-  // Try datetime attribute if element provided
   if (element) {
     const datetime = element.attr("datetime");
     if (datetime) {
@@ -79,18 +67,12 @@ function extractDate(text: string | null, element: { attr: (name: string) => str
   return null;
 }
 
-/**
- * Check if content matches filter keywords
- */
 function matchesKeywords(text: string, keywords: string[]): boolean {
   if (!keywords || keywords.length === 0) return true;
   const lowerText = text.toLowerCase();
   return keywords.some((keyword) => lowerText.includes(keyword.toLowerCase()));
 }
 
-/**
- * Extract snippet around keyword match
- */
 function extractSnippet(text: string, keyword: string, contextLength: number = 50): string {
   const lowerText = text.toLowerCase();
   const index = lowerText.indexOf(keyword.toLowerCase());
@@ -106,9 +88,6 @@ function extractSnippet(text: string, keyword: string, contextLength: number = 5
   return snippet;
 }
 
-/**
- * Find all matches of keyword in text with context
- */
 function findAllMatches(text: string, keyword: string, maxMatches: number = 10): Array<{ context: string; snippet: string }> {
   const matches: Array<{ context: string; snippet: string }> = [];
   const lowerText = text.toLowerCase();
@@ -130,9 +109,6 @@ function findAllMatches(text: string, keyword: string, maxMatches: number = 10):
   return matches;
 }
 
-/**
- * Generate unique ID for a post
- */
 function generatePostId(url: string | null, title: string | null, index: number): string {
   if (url) {
     try {
@@ -152,9 +128,6 @@ function generatePostId(url: string | null, title: string | null, index: number)
   return `post-${index}`;
 }
 
-/**
- * Extract images from content block
- */
 function extractImages($block: any, imageSelector: string, baseUrl: string, $: ReturnType<typeof load>): string[] {
   const images: string[] = [];
   const imageEls = $block.find(imageSelector);
@@ -173,9 +146,6 @@ function extractImages($block: any, imageSelector: string, baseUrl: string, $: R
   return images;
 }
 
-/**
- * Extract author from content block
- */
 function extractAuthor($block: any, authorSelector: string | undefined, $: ReturnType<typeof load>): string | null {
   if (authorSelector) {
     const authorEl = $block.find(authorSelector).first();
@@ -184,7 +154,6 @@ function extractAuthor($block: any, authorSelector: string | undefined, $: Retur
     }
   }
   
-  // Try common author patterns
   const commonSelectors = [
     '[rel="author"]',
     '.author',
@@ -204,13 +173,9 @@ function extractAuthor($block: any, authorSelector: string | undefined, $: Retur
   return null;
 }
 
-/**
- * Extract metadata (Open Graph, Twitter Cards, etc.)
- */
 function extractMetadata($: ReturnType<typeof load>): Record<string, unknown> {
   const metadata: Record<string, unknown> = {};
   
-  // Open Graph
   $('meta[property^="og:"]').each((_, el) => {
     const property = $(el).attr("property");
     const content = $(el).attr("content");
@@ -219,7 +184,6 @@ function extractMetadata($: ReturnType<typeof load>): Record<string, unknown> {
     }
   });
   
-  // Twitter Cards
   $('meta[name^="twitter:"]').each((_, el) => {
     const name = $(el).attr("name");
     const content = $(el).attr("content");
@@ -228,7 +192,6 @@ function extractMetadata($: ReturnType<typeof load>): Record<string, unknown> {
     }
   });
   
-  // Schema.org JSON-LD
   $('script[type="application/ld+json"]').each((_, el) => {
     try {
       const json = JSON.parse($(el).html() || "{}");
@@ -241,9 +204,6 @@ function extractMetadata($: ReturnType<typeof load>): Record<string, unknown> {
   return metadata;
 }
 
-/**
- * Find next page URL
- */
 function findNextPageUrl($: ReturnType<typeof load>, paginationSelector: string, currentUrl: string): string | null {
   if (!paginationSelector) return null;
   
@@ -255,7 +215,6 @@ function findNextPageUrl($: ReturnType<typeof load>, paginationSelector: string,
     }
   }
   
-  // Try common pagination patterns
   const commonSelectors = [
     'a[rel="next"]',
     '.next',
@@ -276,14 +235,10 @@ function findNextPageUrl($: ReturnType<typeof load>, paginationSelector: string,
   return null;
 }
 
-/**
- * Deduplicate posts by URL or content hash
- */
 function deduplicatePosts(posts: Post[]): Post[] {
   const seen = new Map<string, Post>();
   
   for (const post of posts) {
-    // Use URL as primary key
     const postUrl = post.url;
     if (postUrl && typeof postUrl === "string" && postUrl.length > 0) {
       const hashSplit = postUrl.split("#");
@@ -293,7 +248,6 @@ function deduplicatePosts(posts: Post[]): Post[] {
         seen.set(normalizedUrl, post);
       }
     } else {
-      // Fallback to ID
       if (post.id && !seen.has(post.id)) {
         seen.set(post.id, post);
       }
@@ -303,9 +257,6 @@ function deduplicatePosts(posts: Post[]): Post[] {
   return Array.from(seen.values());
 }
 
-/**
- * Fetch single page HTML (with caching)
- */
 async function fetchPageHtml(
   url: string,
   options: {
@@ -315,7 +266,6 @@ async function fetchPageHtml(
     enableCaching?: boolean;
   }
 ): Promise<{ html: string; source: "http" | "browser" }> {
-  // Check cache
   if (options.enableCaching) {
     const cached = pageCache.get(url);
     if (cached && cached.expires > Date.now()) {
@@ -326,10 +276,8 @@ async function fetchPageHtml(
 
   let html: string | undefined;
   let source: "http" | "browser" = "http";
-  // Use browser if scrollToLoad is enabled, waitForSelector is provided, or if URL contains /blog (likely dynamic content)
   let useBrowser = options.scrollToLoad || !!options.waitForSelector || url.includes("/blog");
 
-  // Try HTTP first for static sites
   if (!useBrowser) {
     try {
       const response = await http.get(url, {
@@ -352,7 +300,6 @@ async function fetchPageHtml(
     }
   }
 
-  // Use Puppeteer for dynamic content
   if (useBrowser || !html) {
     const browser = await puppeteer.launch({
       headless: true,
@@ -407,26 +354,21 @@ async function fetchPageHtml(
     }
   }
 
-  // Cache the result
   if (options.enableCaching && html) {
     pageCache.set(url, {
       html: html!,
-      expires: Date.now() + 3600000, // Cache for 1 hour
+      expires: Date.now() + 3600000, 
     });
   }
 
   return { html: html!, source };
 }
 
-/**
- * Find blog pages from website homepage
- */
 async function findBlogPages(homepageUrl: string, html: string): Promise<string[]> {
   const $ = load(html);
   const blogUrls = new Set<string>();
   const baseUrl = new URL(homepageUrl).origin;
   
-  // Common blog link patterns - expanded list
   const blogLinkSelectors = [
     'a[href*="/blog"]',
     'a[href*="/articles"]',
@@ -447,14 +389,12 @@ async function findBlogPages(homepageUrl: string, html: string): Promise<string[
     'footer a[href*="blog"]',
   ];
   
-  // Find blog links from selectors
   for (const selector of blogLinkSelectors) {
     $(selector).each((_, el) => {
       const href = $(el).attr("href");
       if (href) {
         try {
           const fullUrl = normalizeUrl(href, homepageUrl);
-          // More comprehensive URL pattern matching
           if (fullUrl && (
             fullUrl.includes("/blog") || 
             fullUrl.includes("/articles") || 
@@ -464,7 +404,6 @@ async function findBlogPages(homepageUrl: string, html: string): Promise<string[
             fullUrl.includes("/journal") ||
             fullUrl.includes("/magazine")
           )) {
-            // Only add if it's from same domain
             try {
               const urlObj = new URL(fullUrl);
               const baseUrlObj = new URL(baseUrl);
@@ -474,13 +413,11 @@ async function findBlogPages(homepageUrl: string, html: string): Promise<string[
             } catch {}
           }
         } catch (e) {
-          // Skip invalid URLs
         }
       }
     });
   }
   
-  // Check navigation menus with text matching
   $("nav a, .navigation a, .menu a, header a, footer a").each((_, el) => {
     const text = $(el).text().toLowerCase().trim();
     const href = $(el).attr("href");
@@ -497,7 +434,6 @@ async function findBlogPages(homepageUrl: string, html: string): Promise<string[
     )) {
       try {
         const fullUrl = normalizeUrl(href, homepageUrl);
-        // Verify same domain
         try {
           const urlObj = new URL(fullUrl);
           const baseUrlObj = new URL(baseUrl);
@@ -506,26 +442,18 @@ async function findBlogPages(homepageUrl: string, html: string): Promise<string[
           }
         } catch {}
       } catch (e) {
-        // Skip invalid URLs
       }
     }
   });
   
-  // Also check for blog sections on homepage itself (if homepage has blog content)
   const homepageHasBlogContent = $("article, .post, .blog-post, .entry, [class*='blog'], [class*='article']").length > 0;
   if (homepageHasBlogContent) {
-    // Homepage itself might be a blog listing page
     blogUrls.add(homepageUrl);
   }
   
-  // Return up to 10 blog pages (increased from 5)
   return Array.from(blogUrls).slice(0, 10);
 }
 
-/**
- * Returns true when the listing URL is already a known blog (subdomain or path).
- * In that case we accept article links without requiring /blog/ or /news/ in path (e.g. blog.cloudflare.com/post-slug/).
- */
 function isListingUrlBlogSite(listingUrl: string): boolean {
   try {
     const u = new URL(listingUrl);
@@ -541,11 +469,6 @@ function isListingUrlBlogSite(listingUrl: string): boolean {
   }
 }
 
-/**
- * Extract only blog/article URLs from a blog listing page.
- * When listing is already a blog site (e.g. blog.cloudflare.com) or page was detected as blog listing, accept same-origin article links without path allowlist.
- * Otherwise only links with /news/, /blog/, /articles/ etc. in path are included.
- */
 function extractArticleUrlsFromListing(
   html: string,
   listingUrl: string,
@@ -630,9 +553,6 @@ function extractArticleUrlsFromListing(
   return Array.from(articleUrls);
 }
 
-/**
- * Fetch a single article page and extract full content, date, author, headings.
- */
 async function fetchSingleArticle(
   articleUrl: string,
   options: { respectRobotsTxt?: boolean; enableCaching?: boolean } = {}
@@ -646,16 +566,13 @@ async function fetchSingleArticle(
   const { html } = await fetchPageHtml(articleUrl, { enableCaching });
   const $ = load(html);
 
-  // Main content container (article body)
   const articleEl = $("article, .post, .blog-post, .entry-content, .post-content, .article-content, [role='article'], main").first();
   const root = articleEl.length > 0 ? articleEl : $("body");
 
-  // Title (prefer h1 in main)
   let title: string | null = $("h1").first().text().trim() || null;
   if (!title) title = root.find("h1, .title, .post-title, .entry-title").first().text().trim() || null;
   if (!title) title = $("meta[property='og:title']").attr("content")?.trim() || null;
 
-  // Full text content (paragraphs and content blocks)
   const textEls = root.find("p, .content p, .post-content p, .entry-content p, .article-body p, [class*='content'] p");
   const textParts: string[] = [];
   textEls.each((_, el) => {
@@ -664,14 +581,12 @@ async function fetchSingleArticle(
   });
   const text = textParts.length > 0 ? textParts.join("\n\n") : root.text().trim().replace(/\s+/g, " ").trim();
 
-  // Headings (h1–h4 order)
   const headings: string[] = [];
   root.find("h1, h2, h3, h4").each((_, el) => {
     const h = $(el).text().trim();
     if (h) headings.push(h);
   });
 
-  // Date
   let createdAt: string | null = null;
   const dateEl = root.find("time, .date, .published, .post-date, .entry-date, [datetime]").first();
   if (dateEl.length) {
@@ -680,7 +595,6 @@ async function fetchSingleArticle(
   }
   if (!createdAt && text) createdAt = extractDate(text);
 
-  // Author
   let author: string | null = null;
   const authorEl = root.find('[rel="author"], .author, .byline, .post-author, [itemprop="author"]').first();
   if (authorEl.length) author = authorEl.text().trim() || authorEl.attr("content") || null;
@@ -689,7 +603,6 @@ async function fetchSingleArticle(
     if (metaAuthor) author = metaAuthor.trim();
   }
 
-  // Images
   const images: string[] = [];
   root.find("img").each((_, el) => {
     const src = $(el).attr("src") || $(el).attr("data-src");
@@ -712,27 +625,20 @@ async function fetchSingleArticle(
   return post;
 }
 
-/**
- * Detect if URL is a blog page or blog listing
- */
 export async function detectBlogType(url: string, html: string): Promise<{ isBlog: boolean; isBlogListing: boolean; isBlogArticle: boolean; recommendedStrategy: string }> {
   const $ = load(html);
   
-  // Check URL patterns
   const urlLower = url.toLowerCase();
   const isBlogUrl = /\/blog|\/articles|\/posts|\/news|\/stories/i.test(urlLower);
   
-  // Check HTML structure
   const hasArticleTags = $("article").length > 0;
   const hasBlogClasses = $("[class*='blog'], [class*='post'], [class*='article']").length > 0;
   const hasMultipleHeadings = $("h1, h2, h3").length > 3;
   const hasContentBlocks = $("article, .post, .blog-post, .entry").length > 0;
   
-  // Check for blog listing patterns
   const hasMultipleLinks = $("main a, article a, .post a").length > 5;
   const hasPagination = $(".pagination, .page-nav, [rel='next']").length > 0;
   
-  // Check for single article patterns
   const hasSingleMainHeading = $("main h1, article h1").length === 1;
   const hasLongContent = $("main p, article p").length > 5;
   
@@ -755,9 +661,6 @@ export async function detectBlogType(url: string, html: string): Promise<{ isBlo
   };
 }
 
-/**
- * Scrape website content using selectors (enhanced version)
- */
 export async function fetchWebsiteContent(
   url: string,
   options: {
@@ -773,7 +676,6 @@ export async function fetchWebsiteContent(
     scrollToLoad?: boolean;
     maxScrolls?: number;
     limit?: number;
-    // Advanced options
     followPagination?: boolean;
     paginationSelector?: string;
     maxPages?: number;
@@ -811,7 +713,6 @@ export async function fetchWebsiteContent(
     onProgress,
   } = options;
 
-  // Check robots.txt
   if (respectRobotsTxt) {
     const allowed = await checkRobotsTxt(url);
     if (!allowed) {
@@ -826,32 +727,25 @@ export async function fetchWebsiteContent(
   let pagesCrawled = 0;
   let maxPagesToCrawl = followPagination ? maxPages : 1;
   
-  // URLs to crawl - start with provided URL
   const urlsToCrawl: string[] = [url];
   const crawledUrls = new Set<string>();
 
-  // Extract metadata once from first page
   let siteMetadata: Record<string, unknown> = {};
   
-  // Extract profile - initialize outside loop
   let profile: Profile | null = null;
   
-  // Store page HTMLs for comprehensive search
   const pageHtmls = new Map<string, string>();
   const pageTitles = new Map<string, string>();
   
-  // Auto-detect blog pages from homepage (if not already a blog URL)
   let blogPagesFound: string[] = [];
   let isHomepage = true;
 
   while (pagesCrawled < maxPagesToCrawl && allPosts.length < limit && urlsToCrawl.length > 0) {
-    // Get next URL to crawl
     currentUrl = urlsToCrawl.shift() || currentUrl;
     if (crawledUrls.has(currentUrl)) continue;
     crawledUrls.add(currentUrl);
     pagesCrawled++;
     
-    // Check robots.txt for each page
     if (respectRobotsTxt && pagesCrawled > 1) {
       const allowed = await checkRobotsTxt(currentUrl);
       if (!allowed) {
@@ -862,8 +756,6 @@ export async function fetchWebsiteContent(
 
     logger.info({ url: currentUrl, page: pagesCrawled, totalPages: maxPagesToCrawl }, "Crawling page");
 
-    // Fetch page HTML
-    // Auto-enable scrollToLoad for blog pages or when filterKeywords are provided (likely dynamic content)
     let shouldScroll = scrollToLoad || currentUrl.includes("/blog") || (filterKeywords.length > 0);
     let fetchOptions: {
       waitForSelector?: string;
@@ -879,10 +771,8 @@ export async function fetchWebsiteContent(
       fetchOptions.waitForSelector = waitForSelector;
     }
     
-    // Fetch page HTML
     let { html, source } = await fetchPageHtml(currentUrl, fetchOptions);
 
-    // Detect blog type and find blog pages (only on homepage/first page)
     if (isHomepage) {
       const blogDetection = await detectBlogType(currentUrl, html);
       logger.info({ 
@@ -890,7 +780,6 @@ export async function fetchWebsiteContent(
         ...blogDetection 
       }, "Blog detection result");
       
-      // If homepage is not a blog page, find blog pages
       if (!blogDetection.isBlog && !blogDetection.isBlogListing) {
         logger.info({ url: currentUrl }, "Homepage detected, searching for blog pages");
         blogPagesFound = await findBlogPages(currentUrl, html);
@@ -970,7 +859,6 @@ export async function fetchWebsiteContent(
       };
     }
 
-    // Extract posts/content
     let contentBlocks = $(contentSelector);
     logger.info({ 
       url: currentUrl, 
@@ -980,7 +868,6 @@ export async function fetchWebsiteContent(
       scrollUsed: shouldScroll 
     }, "Found content blocks");
 
-    // Fallback: If no content blocks found, try alternative selectors
     if (contentBlocks.length === 0) {
       logger.info({ url: currentUrl }, "No content blocks found with default selector, trying fallback selectors");
       const fallbackSelectors = [
@@ -1001,12 +888,9 @@ export async function fetchWebsiteContent(
         }
       }
       
-      // Last resort: try to find any divs with headings and links (common blog pattern)
-      // But exclude navigation, footer, header, sidebar
       if (contentBlocks.length === 0) {
         logger.info({ url: currentUrl }, "Trying last resort: divs with headings and links");
         
-        // Try main content area first
         const mainContent = $("main, [role='main'], .main-content, .content-area");
         if (mainContent.length > 0) {
           contentBlocks = mainContent.find("div:has(h1, h2, h3, h4):has(a), article, .post");
@@ -1015,13 +899,11 @@ export async function fetchWebsiteContent(
           }
         }
         
-        // If still no blocks, try the filter approach
         if (contentBlocks.length === 0) {
           const allDivs = $("div");
           contentBlocks = allDivs.filter((_, el) => {
             const $el = $(el);
             
-            // Exclude navigation, header, footer, sidebar
             const parentClasses = $el.parent().attr("class") || "";
             const parentId = $el.parent().attr("id") || "";
             const isNav = /nav|header|footer|sidebar|menu|topbar|bottombar/i.test(parentClasses + parentId);
@@ -1030,9 +912,8 @@ export async function fetchWebsiteContent(
             const hasHeading = $el.find("h1, h2, h3, h4").length > 0;
             const hasLink = $el.find("a").length > 0;
             const text = $el.text().trim();
-            const hasText = text.length > 100; // Require substantial text for blog posts
+            const hasText = text.length > 100; 
             
-            // Check if it looks like a blog post (not navigation)
             const textLower = text.toLowerCase();
             const isNavigation = /^(home|about|contact|help|privacy|terms|login|signup|cart|checkout|account)$/i.test(textLower.substring(0, 50));
             
@@ -1056,15 +937,12 @@ export async function fetchWebsiteContent(
         title = titleEl.text().trim() || null;
       }
       
-      // Fallback title extraction
       if (!title) {
-        // Try common heading patterns
         const headings = $block.find("h1, h2, h3, h4, .title, .post-title, .entry-title, [class*='title']").first();
         if (headings.length > 0) {
           title = headings.text().trim() || null;
         }
         
-        // Try link text if it looks like a title
         if (!title) {
           const firstLink = $block.find("a").first();
           const linkText = firstLink.text().trim();
@@ -1074,7 +952,6 @@ export async function fetchWebsiteContent(
         }
       }
 
-      // Extract text content
       let text: string | null = null;
       if (textSelector) {
         const textEls = $block.find(textSelector);
@@ -1086,9 +963,7 @@ export async function fetchWebsiteContent(
         text = texts.join(" ").trim() || null;
       }
       
-      // Fallback text extraction
       if (!text) {
-        // Try common content patterns
         const contentEls = $block.find("p, .content, .excerpt, .summary, .description, [class*='content'], [class*='text']");
         if (contentEls.length > 0) {
           const texts: string[] = [];
@@ -1099,7 +974,6 @@ export async function fetchWebsiteContent(
           text = texts.join(" ").trim() || null;
         }
         
-        // Last resort: get all text but exclude title
         if (!text) {
           const allText = $block.clone().children().remove().end().text().trim();
           if (allText && allText.length > 20) {
@@ -1108,7 +982,6 @@ export async function fetchWebsiteContent(
         }
       }
 
-      // Extract link
       let link: string | null = null;
       if (linkSelector) {
         const linkEl = $block.find(linkSelector).first();
@@ -1135,20 +1008,17 @@ export async function fetchWebsiteContent(
         createdAt = extractDate(text);
       }
 
-      // Extract author
       let author: string | null = null;
       if (shouldExtractAuthor) {
         author = extractAuthor($block, authorSelector, $);
       }
 
-      // Extract images
       let images: string[] | null = null;
       if (shouldExtractImages) {
         const extractedImages = extractImages($block, imageSelector, currentUrl, $);
         images = extractedImages.length > 0 ? extractedImages : null;
       }
 
-      // Filter by keywords if provided (only include content that matches keywords)
       if (filterKeywords && filterKeywords.length > 0) {
         const combinedText = [title, text, link].filter(Boolean).join(" ").toLowerCase();
         const matchesAnyKeyword = filterKeywords.some(keyword => 
@@ -1161,7 +1031,6 @@ export async function fetchWebsiteContent(
         }
       }
 
-      // Skip navigation links, contact info, forms, footer links, etc.
       const skipPatterns = [
         /^(about|contact|help|privacy|terms|exchange|return|payment|shipping|faq|login|signup|register|cart|checkout|account|profile|settings|search|menu|home|store|locator)$/i,
         /^(mailto:|tel:|#|javascript:)/i,
@@ -1172,7 +1041,6 @@ export async function fetchWebsiteContent(
         /^\+?\d{10,}/i, // Phone numbers
       ];
       
-      // Check if title/text/link matches skip patterns
       const titleLower = title?.toLowerCase().trim() || "";
       const textLower = text?.toLowerCase().trim() || "";
       const linkLower = link?.toLowerCase() || "";
@@ -1391,8 +1259,7 @@ export async function fetchWebsiteContent(
             });
           }
         }
-        
-        // Search in post URL
+
         if (post.url && post.url.toLowerCase().includes(keywordLower)) {
           locations.push({
             url: post.url,
@@ -1415,7 +1282,6 @@ export async function fetchWebsiteContent(
         }
       }
       
-      // Remove duplicates based on URL + position + matchType
       const seen = new Set<string>();
       const uniqueLocations = locations.filter(loc => {
         const key = `${loc.url}|${loc.position}|${loc.matchType}`;
@@ -1428,7 +1294,7 @@ export async function fetchWebsiteContent(
         keyword,
         found: uniqueLocations.length > 0,
         totalMatches: uniqueLocations.length,
-        locations: uniqueLocations.slice(0, 50), // Limit to 50 matches per keyword
+        locations: uniqueLocations.slice(0, 50),
       };
       
       logger.info({ 
@@ -1480,9 +1346,6 @@ export async function fetchWebsiteContent(
   };
 }
 
-/**
- * Flow: Website URL → Blog listing page → Extract article URLs → For each article fetch full content (date, author, headings).
- */
 export async function fetchWebsiteContentViaListing(
   url: string,
   options: {
@@ -1511,7 +1374,6 @@ export async function fetchWebsiteContentViaListing(
   const domain = extractDomain(url);
   const baseOrigin = new URL(url).origin;
 
-  // Step 1: Fetch initial page (website or homepage)
   onProgress?.({ phase: "fetching_listing" });
   const { html: initialHtml } = await fetchPageHtml(url, {
     scrollToLoad,
@@ -1523,7 +1385,6 @@ export async function fetchWebsiteContentViaListing(
   let listingUrl = url;
   let listingHtml = initialHtml;
 
-  // Step 2: If current page is not a blog listing, find blog listing page and fetch it
   if (!blogDetection.isBlog && !blogDetection.isBlogListing) {
     const blogPages = await findBlogPages(url, initialHtml);
     if (blogPages.length === 0) {
@@ -1539,7 +1400,6 @@ export async function fetchWebsiteContentViaListing(
       listingHtml = html;
     }
   } else if (blogDetection.isBlogListing && !scrollToLoad) {
-    // Re-fetch with scroll to get full listing
     const { html } = await fetchPageHtml(listingUrl, {
       scrollToLoad: true,
       maxScrolls,
@@ -1548,7 +1408,6 @@ export async function fetchWebsiteContentViaListing(
     listingHtml = html;
   }
 
-  // Step 3: Extract article URLs from listing (relax path check when page was detected as blog listing)
   const listingDetectedAsBlog = blogDetection.isBlogListing || blogDetection.isBlog;
   const articleUrls = extractArticleUrlsFromListing(listingHtml, listingUrl, baseOrigin, {
     listingDetectedAsBlog,
@@ -1571,7 +1430,6 @@ export async function fetchWebsiteContentViaListing(
     isPrivate: false,
   };
 
-  // Step 4: For each article URL, fetch article page and extract full content
   const posts: Post[] = [];
   let errors = 0;
   for (let i = 0; i < uniqueUrls.length; i++) {
@@ -1581,7 +1439,7 @@ export async function fetchWebsiteContentViaListing(
     try {
       const post = await fetchSingleArticle(articleUrl, { respectRobotsTxt, enableCaching });
       posts.push(post);
-      await delay(300); // Polite delay between article fetches
+      await delay(300);
     } catch (err) {
       logger.warn({ articleUrl, err: (err as Error).message }, "Failed to fetch article");
       errors++;
@@ -1602,9 +1460,6 @@ export async function fetchWebsiteContentViaListing(
   };
 }
 
-/**
- * Fetch website profile (metadata only)
- */
 export async function fetchWebsiteProfile(url: string): Promise<Profile> {
   try {
     const response = await http.get(url, {
@@ -1649,9 +1504,7 @@ export async function fetchWebsiteProfile(url: string): Promise<Profile> {
   }
 }
 
-/**
- * Fetch website content with recent posts (enhanced)
- */
+
 export async function fetchWebsiteProfileAndRecent(
   url: string,
   limit: number,
