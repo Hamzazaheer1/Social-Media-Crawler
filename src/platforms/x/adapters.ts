@@ -8,10 +8,108 @@ const HEADLESS = false;
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 
-function useGuestMode(): boolean {
-  if (process.env.X_USE_GUEST === "true" || process.env.X_USE_GUEST === "1") return true;
-  if (!fs.existsSync(STATE_PATH)) return true;
-  return false;
+function checkSessionExpiry(): {
+  isValid: boolean;
+  expiresAt: Date | null;
+  expiresInMs: number | null;
+} {
+  if (!fs.existsSync(STATE_PATH)) {
+    return { isValid: false, expiresAt: null, expiresInMs: null };
+  }
+
+  try {
+    const stateContent = fs.readFileSync(STATE_PATH, "utf-8");
+    const state = JSON.parse(stateContent) as {
+      cookies?: Array<{
+        name: string;
+        value: string;
+        domain: string;
+        path: string;
+        expires?: number;
+        httpOnly?: boolean;
+        secure?: boolean;
+        sameSite?: string;
+      }>;
+    };
+
+    const now = Date.now();
+    let earliestExpiry: number | null = null;
+    if (state.cookies && Array.isArray(state.cookies)) {
+      for (const cookie of state.cookies) {
+        const importantCookies = ["auth_token", "ct0", "twid", "kdt", "personalization_id"];
+        
+        if (importantCookies.includes(cookie.name) && cookie.expires) {
+          const expiryMs = cookie.expires * 1000;
+          
+          if (expiryMs < now) {
+            logger.warn(
+              { cookie: cookie.name, expiredAt: new Date(expiryMs) },
+              "[X] Session cookie expired"
+            );
+            return {
+              isValid: false,
+              expiresAt: new Date(expiryMs),
+              expiresInMs: 0,
+            };
+          }
+
+          if (earliestExpiry === null || expiryMs < earliestExpiry) {
+            earliestExpiry = expiryMs;
+          }
+        }
+      }
+    }
+
+    if (earliestExpiry === null) {
+      logger.info("[X] Session has no expiry (session cookies - may expire on browser close)");
+      return {
+        isValid: true,
+        expiresAt: null,
+        expiresInMs: null,
+      };
+    }
+
+    const expiresInMs = earliestExpiry - now;
+    const isValid = expiresInMs > 0;
+
+    logger.info(
+      {
+        expiresAt: new Date(earliestExpiry),
+        expiresInMs,
+        expiresInHours: Math.floor(expiresInMs / (1000 * 60 * 60)),
+        expiresInDays: Math.floor(expiresInMs / (1000 * 60 * 60 * 24)),
+      },
+      "[X] Session expiry check"
+    );
+
+    return {
+      isValid,
+      expiresAt: new Date(earliestExpiry),
+      expiresInMs,
+    };
+  } catch (error) {
+    logger.error({ error, statePath: STATE_PATH }, "[X] Failed to check session expiry");
+    return { isValid: false, expiresAt: null, expiresInMs: null };
+  }
+}
+
+/**
+ * Validate that session file exists and is valid
+ * Throws error if session is missing or expired
+ */
+function validateSession(): void {
+  if (!fs.existsSync(STATE_PATH)) {
+    throw new Error(
+      `[X] Session file not found at ${STATE_PATH}. Please run x-auth-setup first to save login session.`
+    );
+  }
+
+  const expiryCheck = checkSessionExpiry();
+  if (!expiryCheck.isValid) {
+    throw new Error(
+      `[X] Session expired. Expired at: ${expiryCheck.expiresAt?.toLocaleString() || "unknown"}. Please run x-auth-setup again to refresh session.`
+    );
+  }
 }
 
 /* ================= HELPERS ================= */
@@ -26,22 +124,38 @@ function extractUsername(target: string): string {
 }
 
 async function openPage(): Promise<{ page: Page; close: () => Promise<void> }> {
-  const guest = useGuestMode();
-  if (guest) logger.info("[X] using guest mode (no login)");
+  validateSession();
+
+  const expiryCheck = checkSessionExpiry();
+  if (expiryCheck.expiresAt) {
+    logger.info(
+      {
+        expiresAt: expiryCheck.expiresAt,
+        expiresInHours: expiryCheck.expiresInMs
+          ? Math.floor(expiryCheck.expiresInMs / (1000 * 60 * 60))
+          : null,
+        expiresInDays: expiryCheck.expiresInMs
+          ? Math.floor(expiryCheck.expiresInMs / (1000 * 60 * 60 * 24))
+          : null,
+      },
+      "[X] using saved session"
+    );
+  } else {
+    logger.info("[X] using saved session (no expiry - session cookies)");
+  }
 
   const browser = await chromium.launch({
     headless: HEADLESS,
     args: ["--disable-blink-features=AutomationControlled"],
   });
 
-  const contextOptions: Parameters<typeof browser.newContext>[0] = {
+  const context = await browser.newContext({
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     viewport: { width: 1400, height: 900 },
-  };
-  if (!guest) contextOptions.storageState = STATE_PATH;
+    storageState: STATE_PATH,
+  });
 
-  const context = await browser.newContext(contextOptions);
   const page = await context.newPage();
 
   return {
@@ -162,7 +276,6 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
     while (stagnantRounds < 3) {
       round++;
 
-      // 1️⃣ Extract visible tweets
       const batch = await page.evaluate(() => {
         return Array.from(document.querySelectorAll('article[data-testid="tweet"]'))
           .map((t) => {
@@ -179,7 +292,6 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
           .filter(Boolean);
       });
 
-      // 2️⃣ Deduplicate + add
       let added = 0;
       for (const p of batch as Post[]) {
         if (!seen.has(p.id)) {
@@ -202,7 +314,6 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
         "[X ALL] progress"
       );
 
-      // 3️⃣ Cursor comparison
       if (newCursorId && newCursorId !== lastCursorId) {
         lastCursorId = newCursorId;
         stagnantRounds = 0;
@@ -214,15 +325,12 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
         );
       }
 
-      // 4️⃣ Scroll down
       await page.evaluate(() => {
         window.scrollTo(0, document.body.scrollHeight);
       });
 
-      // ⏳ Adaptive delay (slow internet safe)
       await delay(6000 + stagnantRounds * 2000);
 
-      // 5️⃣ WAIT until new tweets appear (NULL-SAFE ✅)
       if (lastCursorId) {
         try {
           await page.waitForFunction(
@@ -236,12 +344,11 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
             { timeout: 20000 }
           );
         } catch {
-          // network slow / X lazy-load — safe to ignore
+
         }
       }
     }
 
-    // 6️⃣ Sort oldest → newest
     posts.sort((a, b) => {
       if (!a.createdAt || !b.createdAt) return 0;
       return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
@@ -256,4 +363,32 @@ export async function fetchXAllPosts(target: string): Promise<Post[]> {
   } finally {
     await close();
   }
+}
+
+
+export function getXSessionStatus(): {
+  exists: boolean;
+  isValid: boolean;
+  expiresAt: Date | null;
+  expiresInMs: number | null;
+  expiresInHours: number | null;
+  expiresInDays: number | null;
+  statePath: string;
+} {
+  const exists = fs.existsSync(STATE_PATH);
+  const expiryCheck = checkSessionExpiry();
+
+  return {
+    exists,
+    isValid: expiryCheck.isValid,
+    expiresAt: expiryCheck.expiresAt,
+    expiresInMs: expiryCheck.expiresInMs,
+    expiresInHours: expiryCheck.expiresInMs
+      ? Math.floor(expiryCheck.expiresInMs / (1000 * 60 * 60))
+      : null,
+    expiresInDays: expiryCheck.expiresInMs
+      ? Math.floor(expiryCheck.expiresInMs / (1000 * 60 * 60 * 24))
+      : null,
+    statePath: STATE_PATH,
+  };
 }
