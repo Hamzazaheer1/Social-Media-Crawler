@@ -5,7 +5,7 @@ const STORAGE_DIR = "./storage";
 const STATE_PATH = "./storage/x_state.json";
 
 (async () => {
-  // Ensure storage directory exists
+
   if (!fs.existsSync(STORAGE_DIR)) {
     fs.mkdirSync(STORAGE_DIR, { recursive: true });
   }
@@ -31,7 +31,7 @@ const STATE_PATH = "./storage/x_state.json";
   console.log(`\n✅ Session saved to: ${STATE_PATH}`);
   console.log("   This session will now be used by all users\n");
   
-  // Check and display session expiry info
+
   try {
     const stateContent = fs.readFileSync(STATE_PATH, "utf-8");
     const state = JSON.parse(stateContent) as {
