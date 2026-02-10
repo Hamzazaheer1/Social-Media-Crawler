@@ -4,7 +4,7 @@ import { chromium, type Page } from "playwright";
 import fs from "fs";
 
 const STATE_PATH = "./storage/x_state.json";
-const HEADLESS = false;
+const HEADLESS = true;
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 
